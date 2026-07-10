@@ -48,7 +48,7 @@ const DEFAULT_PRODUCTS = {
   'c1': [
     { id: 'p1', name: 'Cotton Lawn Fabric (Premium)', price: 1850, unit: 'Meter', stock: 450, hsCode: '5208.3100' },
     { id: 'p2', name: 'Designer Ready-to-Wear Kurti', price: 4200, unit: 'Piece', stock: 120, hsCode: '6204.4200' },
-    { id: 'p3', name: 'Embroidered Silk Shawl', price: 8500, unit: 'Piece', stock: 65, hsCode: '6214.1000' }
+    { id: 'p3', name: 'Embroidered Silk Shawl', price: 8500, unit: 'Piece', stock: 6, hsCode: '6214.1000' }
   ],
   'c2': [
     { id: 'p4', name: 'Basmati Rice Premium (5 Kg)', price: 2150, unit: 'Pack', stock: 300, hsCode: '1006.3010' },
@@ -89,11 +89,13 @@ const DEFAULT_INVOICES = [
       { name: 'Cotton Lawn Fabric (Premium)', price: 1850, quantity: 4, subtotal: 7400 }
     ],
     subtotal: 7400,
-    salesTax: 1332, // 18%
-    total: 8732,
+    salesTax: 1332,
+    fbrFee: 1.00,
+    total: 8733,
     fbrStatus: 'SUCCESS',
     fbrFiscalNumber: 'FBR-c1-3819482-7-100495-20260710-143029',
-    fbrUsin: '10049520260710143029'
+    fbrUsin: '10049520260710143029',
+    paymentMethod: 'Cash'
   },
   {
     id: 'inv_102',
@@ -108,16 +110,18 @@ const DEFAULT_INVOICES = [
       { name: 'Canola Cooking Oil (5 Litre)', price: 3450, quantity: 1, subtotal: 3450 }
     ],
     subtotal: 7750,
-    salesTax: 1162.5, // 15%
-    total: 8912.5,
+    salesTax: 1162.5,
+    fbrFee: 1.00,
+    total: 8913.5,
     fbrStatus: 'SUCCESS',
     fbrFiscalNumber: 'FBR-c2-4928103-4-201948-20260710-151044',
-    fbrUsin: '20194820260710151044'
+    fbrUsin: '20194820260710151044',
+    paymentMethod: 'Card'
   }
 ];
 
 export default function App() {
-  // Authentication & Session state
+  // Authentication & Session
   const [currentUser, setCurrentUser] = useState(() => {
     const saved = localStorage.getItem('fbr_current_user');
     return saved ? JSON.parse(saved) : null;
@@ -127,12 +131,22 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
 
+  // Active terminal client
+  const [activeSidebarTab, setActiveSidebarTab] = useState('dashboard');
+  const [activeClient, setActiveClient] = useState(DEFAULT_CLIENTS[0]);
+
+  // FBR Connection Mode: Online or Offline
+  const [fbrConnectionMode, setFbrConnectionMode] = useState('online');
+
+  // Ledger Filter states
+  const [ledgerSearch, setLedgerSearch] = useState('');
+  const [ledgerFilterStatus, setLedgerFilterStatus] = useState('ALL');
+
   // Database-like states backed by LocalStorage, with dynamic upgrade logic
   const [clients, setClients] = useState(() => {
     const saved = localStorage.getItem('fbr_clients');
     if (saved) {
       const parsed = JSON.parse(saved);
-      // BUG FIX: Detect if existing localStorage has outdated schema without credentials
       if (parsed.length > 0 && !parsed[0].username) {
         localStorage.removeItem('fbr_clients');
         return DEFAULT_CLIENTS;
@@ -159,37 +173,8 @@ export default function App() {
 
   const [fbrLogs, setFbrLogs] = useState(() => {
     const saved = localStorage.getItem('fbr_logs');
-    return saved ? JSON.parse(saved) : [
-      {
-        time: '2026-07-10 15:10:44',
-        type: 'SUCCESS',
-        method: 'POST',
-        url: 'https://api.fbr.gov.pk/ims/api/v1/SavePOSInvoice',
-        payload: {
-          InvoiceNumber: 'INV-2026-0002',
-          POSID: '201948',
-          USIN: '20194820260710151044',
-          DateTime: '2026-07-10 15:10',
-          BuyerNTN: '2211443-8',
-          BuyerName: 'Hamza Malik',
-          TotalQuantity: 3,
-          TotalBill: 8912.5,
-          TaxRate: 15,
-          SalesTax: 1162.5
-        },
-        response: {
-          ResponseCode: '100',
-          ResponseMessage: 'Invoice Reported Successfully to FBR',
-          FBRFiscalNumber: 'FBR-c2-4928103-4-201948-20260710-151044',
-          USIN: '20194820260710151044'
-        }
-      }
-    ];
+    return saved ? JSON.parse(saved) : [];
   });
-
-  // Client view navigation state
-  const [activeSidebarTab, setActiveSidebarTab] = useState('dashboard'); // 'dashboard', 'pos', 'inventory', 'customers', 'fbr_hub', 'settings', 'admin_panel'
-  const [activeClient, setActiveClient] = useState(DEFAULT_CLIENTS[0]);
 
   // Global FBR settings
   const [fbrEndpoint, setFbrEndpoint] = useState('https://api.fbr.gov.pk/ims/api/v1/SavePOSInvoice');
@@ -245,13 +230,11 @@ export default function App() {
     e.preventDefault();
     setLoginError('');
     
-    // Admin check
     if (loginUsername === 'admin' && loginPassword === 'admin123') {
       setCurrentUser({ role: 'admin', name: 'System Administrator' });
       return;
     }
 
-    // Client stores check
     const matchedClient = clients.find(
       c => c.username === loginUsername && c.password === loginPassword
     );
@@ -274,7 +257,7 @@ export default function App() {
     setShowPrintInvoice(null);
   };
 
-  // Client Management Handlers
+  // Client Onboarding Handlers
   const addClient = (clientData) => {
     const newId = 'c' + (clients.length + 1);
     const userAlias = clientData.companyName.split(' ')[0].toLowerCase();
@@ -294,7 +277,7 @@ export default function App() {
     setClients(clients.map(c => c.id === clientId ? { ...c, isActive: status } : c));
   };
 
-  // Product Inventory Handlers
+  // Product Catalog Inventory Handlers
   const addProduct = (clientId, product) => {
     const clientProds = products[clientId] || [];
     const newProduct = { 
@@ -318,14 +301,22 @@ export default function App() {
     });
   };
 
-  // POS Invoicing Cartesian state
+  // POS Checkout Cartesian state
   const [selectedCust, setSelectedCust] = useState('');
   const [cartItems, setCartItems] = useState([]);
   const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [showPrintInvoice, setShowPrintInvoice] = useState(null);
 
   const addToCart = (product) => {
+    // Check if stock is available
     const existing = cartItems.find(item => item.id === product.id);
+    const activeQty = existing ? existing.qty : 0;
+    
+    if (activeQty >= product.stock) {
+      alert(`Out of stock! Only ${product.stock} units available.`);
+      return;
+    }
+
     if (existing) {
       setCartItems(cartItems.map(item => item.id === product.id ? {
         ...item,
@@ -346,6 +337,15 @@ export default function App() {
   const updateCartQty = (prodId, delta) => {
     const matched = cartItems.find(item => item.id === prodId);
     if (!matched) return;
+
+    // Check inventory ceiling for increase
+    if (delta > 0) {
+      const dbProd = (products[activeClient.id] || []).find(p => p.id === prodId);
+      if (dbProd && matched.qty >= dbProd.stock) {
+        alert(`Out of stock limit! Maximum ${dbProd.stock} units allowed.`);
+        return;
+      }
+    }
     
     const newQty = matched.qty + delta;
     if (newQty <= 0) {
@@ -357,6 +357,73 @@ export default function App() {
         subtotal: newQty * item.price
       } : item));
     }
+  };
+
+  // FBR simulation logic
+  const handleFbrSync = (invoiceData, isForcedOnline = false) => {
+    const isOnline = isForcedOnline || (fbrConnectionMode === 'online');
+    
+    const timestampStr = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+    const usin = `${activeClient.posId}${timestampStr}`;
+    const fbrFiscalNumber = `FBR-${activeClient.id}-${activeClient.ntn}-${activeClient.posId}-${new Date().toISOString().slice(0,10)}-${Date.now().toString().slice(-6)}`;
+    
+    const requestPayload = {
+      InvoiceNumber: invoiceData.invoiceNumber,
+      POSID: activeClient.posId,
+      USIN: usin,
+      DateTime: invoiceData.date,
+      BuyerNTN: invoiceData.customerNtn || 'N/A',
+      BuyerName: invoiceData.customerName,
+      BuyerPhone: invoiceData.customerPhone || 'N/A',
+      TotalQuantity: invoiceData.items.reduce((sum, item) => sum + item.quantity, 0),
+      TotalBill: invoiceData.total,
+      TaxRate: activeClient.salesTaxRate,
+      SalesTax: invoiceData.salesTax,
+      POSServiceFee: 1.00,
+      Items: invoiceData.items.map(item => ({
+        ItemCode: item.name.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+        ItemName: item.name,
+        Quantity: item.quantity,
+        TaxRate: activeClient.salesTaxRate,
+        SalesTax: Math.round(item.price * item.quantity * (activeClient.salesTaxRate / 100))
+      }))
+    };
+
+    // Fails if store disabled by admin OR offline mode selected
+    const isSuccess = activeClient.isActive && isOnline;
+    
+    const logTime = new Date().toLocaleString();
+    const logEntry = {
+      time: logTime,
+      type: isSuccess ? 'SUCCESS' : (isOnline ? 'ERROR' : 'OFFLINE_QUEUED'),
+      method: 'POST',
+      url: fbrEndpoint,
+      payload: requestPayload,
+      response: isSuccess ? {
+        ResponseCode: '100',
+        ResponseMessage: 'Invoice Reported Successfully to FBR',
+        FBRFiscalNumber: fbrFiscalNumber,
+        USIN: usin,
+        IntegrationStatus: 'Integrated & Verified'
+      } : (!isOnline ? {
+        ResponseCode: '202',
+        ResponseMessage: 'Offline mode active. Invoice saved to local queue.'
+      } : {
+        ResponseCode: '401',
+        ResponseMessage: 'Unauthorized POS ID. Connection rejected by FBR Gateway.',
+        FBRFiscalNumber: null,
+        USIN: null
+      })
+    };
+
+    setFbrLogs(prev => [logEntry, ...prev]);
+
+    return {
+      success: isSuccess,
+      isOffline: !isOnline,
+      fiscalNumber: isSuccess ? fbrFiscalNumber : null,
+      usin: isSuccess ? usin : null
+    };
   };
 
   const processCartInvoicing = (e) => {
@@ -381,7 +448,8 @@ export default function App() {
 
     const subtotal = cartItems.reduce((sum, item) => sum + item.subtotal, 0);
     const salesTax = Math.round(subtotal * (activeClient.salesTaxRate / 100) * 100) / 100;
-    const total = subtotal + salesTax;
+    const fbrFee = 1.00; // Mandatory Rs. 1 POS fee
+    const total = subtotal + salesTax + fbrFee;
     const invNumber = 'INV-' + new Date().getFullYear() + '-' + String(invoices.length + 1).padStart(4, '0');
 
     const tempInvoice = {
@@ -395,17 +463,29 @@ export default function App() {
       items: cartItems.map(i => ({ name: i.name, price: i.price, quantity: i.qty, subtotal: i.subtotal })),
       subtotal,
       salesTax,
+      fbrFee,
       total,
       paymentMethod,
       fbrStatus: 'PENDING'
     };
 
-    // FBR Gateway Reporting
+    // Deduct stock levels in local store database
+    const storeProds = products[activeClient.id] || [];
+    const updatedProds = storeProds.map(p => {
+      const cartMatch = cartItems.find(c => c.id === p.id);
+      if (cartMatch) {
+        return { ...p, stock: Math.max(0, p.stock - cartMatch.qty) };
+      }
+      return p;
+    });
+    setProducts({ ...products, [activeClient.id]: updatedProds });
+
+    // FBR Sync
     const syncRes = handleFbrSync(tempInvoice);
 
     const finalInvoice = {
       ...tempInvoice,
-      fbrStatus: syncRes.success ? 'SUCCESS' : 'FAILED',
+      fbrStatus: syncRes.success ? 'SUCCESS' : (syncRes.isOffline ? 'OFFLINE_PENDING' : 'FAILED'),
       fbrFiscalNumber: syncRes.fiscalNumber,
       fbrUsin: syncRes.usin
     };
@@ -416,75 +496,94 @@ export default function App() {
     setShowPrintInvoice(finalInvoice);
   };
 
-  // If not logged in, render secure Login Panel
-  if (!currentUser) {
-    return (
-      <div className="app-container" style={{ justifyContent: 'center' }}>
-        <div className="login-wrapper">
-          <div className="login-card">
-            <div className="login-badge">
-              <div className="brand-icon" style={{ margin: '0 auto 16px auto', width: '50px', height: '50px', fontSize: '24px' }}>F</div>
-              <h2 style={{ fontSize: '22px' }}>FBR Sync Gateway</h2>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>
-                On-Demand Integrated POS Billing Network
-              </p>
-            </div>
-
-            <form onSubmit={handleLogin}>
-              <div className="form-group">
-                <label>Access Identity</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  required
-                  placeholder="Enter login username"
-                  value={loginUsername}
-                  onChange={e => setLoginUsername(e.target.value)}
-                />
-              </div>
-
-              <div className="form-group">
-                <label>Secure Key / Password</label>
-                <input
-                  type="password"
-                  className="form-control"
-                  required
-                  placeholder="••••••••"
-                  value={loginPassword}
-                  onChange={e => setLoginPassword(e.target.value)}
-                />
-              </div>
-
-              {loginError && (
-                <div style={{ color: 'var(--danger)', fontSize: '12.5px', marginBottom: '16px', textAlign: 'center' }}>
-                  ⚠️ {loginError}
-                </div>
-              )}
-
-              <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '10px' }}>
-                🔒 Secure Portal Login
-              </button>
-            </form>
-
-            <div className="login-hint">
-              <strong>🔑 Demo Authentication Profiles:</strong>
-              <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <div>• System Admin: <code>admin</code> / <code>admin123</code></div>
-                <div>• Al-Karam Textiles: <code>alkaram</code> / <code>alkaram123</code></div>
-                <div>• Chase Up Superstore: <code>chaseup</code> / <code>chaseup123</code></div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+  // Sync Offline Queue handler
+  const handleBulkSyncOfflineQueue = () => {
+    const offlineInvoices = invoices.filter(
+      i => i.clientId === activeClient.id && i.fbrStatus === 'OFFLINE_PENDING'
     );
-  }
+
+    if (offlineInvoices.length === 0) {
+      alert('No offline invoices to sync.');
+      return;
+    }
+
+    const updatedInvoices = invoices.map(inv => {
+      if (inv.clientId === activeClient.id && inv.fbrStatus === 'OFFLINE_PENDING') {
+        // Post live to FBR Gateway
+        const syncRes = handleFbrSync(inv, true); // force online posting
+        return {
+          ...inv,
+          fbrStatus: syncRes.success ? 'SUCCESS' : 'FAILED',
+          fbrFiscalNumber: syncRes.fiscalNumber,
+          fbrUsin: syncRes.usin
+        };
+      }
+      return inv;
+    });
+
+    setInvoices(updatedInvoices);
+    alert(`Successfully synchronized ${offlineInvoices.length} queued invoices with FBR!`);
+  };
+
+  // Download Invoice HTML Receipt
+  const handleDownloadInvoiceFile = (invoice) => {
+    const el = document.createElement("a");
+    const receiptText = `
+========================================
+       ${activeClient.companyName}
+========================================
+Address: ${activeClient.address}
+NTN: ${activeClient.ntn}   POS ID: ${activeClient.posId}
+----------------------------------------
+Invoice #: ${invoice.invoiceNumber}
+Date: ${invoice.date}
+Payment: ${invoice.paymentMethod}
+Customer: ${invoice.customerName}
+Phone: ${invoice.customerPhone}
+----------------------------------------
+Items:
+${invoice.items.map(item => `${item.name.padEnd(25)} Rs. ${item.price} x ${item.quantity} = Rs. ${item.subtotal}`).join('\n')}
+----------------------------------------
+Subtotal:                    Rs. ${invoice.subtotal}
+Sales Tax (${activeClient.salesTaxRate}%):           Rs. ${invoice.salesTax}
+FBR POS Fee:                 Rs. ${invoice.fbrFee}
+----------------------------------------
+NET BILL TOTAL:              Rs. ${invoice.total}
+========================================
+FBR FISCAL INTEGRATION DETAILS:
+FBR Invoice #: ${invoice.fbrFiscalNumber || 'OFFLINE'}
+USIN: ${invoice.fbrUsin || 'OFFLINE'}
+Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || ''}
+========================================
+    `;
+
+    const file = new Blob([receiptText], { type: 'text/plain' });
+    el.href = URL.createObjectURL(file);
+    el.download = `${invoice.invoiceNumber}-FBR-fiscal-copy.txt`;
+    document.body.appendChild(el);
+    el.click();
+    document.body.removeChild(el);
+  };
+
+  // Filtered Ledger list
+  const filteredInvoices = invoices.filter(inv => {
+    if (currentUser.role !== 'admin' && inv.clientId !== activeClient.id) return false;
+    
+    // Search filter
+    const matchesSearch = inv.invoiceNumber.toLowerCase().includes(ledgerSearch.toLowerCase()) || 
+                          inv.customerName.toLowerCase().includes(ledgerSearch.toLowerCase());
+    
+    // Status filter
+    if (ledgerFilterStatus === 'ALL') return matchesSearch;
+    return matchesSearch && (inv.fbrStatus === ledgerFilterStatus);
+  });
 
   // Active client billing metrics calculations
   const clientInvoices = invoices.filter(inv => inv.clientId === activeClient.id);
   const totalSalesVal = clientInvoices.reduce((sum, inv) => sum + inv.total, 0);
   const totalTaxCollected = clientInvoices.reduce((sum, inv) => sum + inv.salesTax, 0);
   const fbrSyncSuccessCount = clientInvoices.filter(i => i.fbrStatus === 'SUCCESS').length;
+  const offlineQueueCount = clientInvoices.filter(i => i.fbrStatus === 'OFFLINE_PENDING').length;
 
   return (
     <div className="app-wrapper">
@@ -514,14 +613,14 @@ export default function App() {
             className={`nav-item ${activeSidebarTab === 'dashboard' ? 'active' : ''}`}
             onClick={() => { setActiveSidebarTab('dashboard'); setShowPrintInvoice(null); }}
           >
-            📊 Dashboard
+            📊 Dashboard Overview
           </button>
 
           <button 
             className={`nav-item ${activeSidebarTab === 'pos' ? 'active' : ''}`}
             onClick={() => { setActiveSidebarTab('pos'); setShowPrintInvoice(null); }}
           >
-            🛒 POS Terminal
+            🛒 POS Billing terminal
           </button>
 
           <button 
@@ -535,21 +634,21 @@ export default function App() {
             className={`nav-item ${activeSidebarTab === 'customers' ? 'active' : ''}`}
             onClick={() => { setActiveSidebarTab('customers'); setShowPrintInvoice(null); }}
           >
-            👥 Clients Loyalty
+            👥 Clients Directory
           </button>
 
           <button 
             className={`nav-item ${activeSidebarTab === 'fbr_hub' ? 'active' : ''}`}
             onClick={() => { setActiveSidebarTab('fbr_hub'); setShowPrintInvoice(null); }}
           >
-            🔌 FBR Sync Center
+            🔌 FBR Sync Center {offlineQueueCount > 0 && <span style={{ background: 'var(--warning)', color: '#000', padding: '1px 6px', borderRadius: '4px', fontSize: '9px', marginLeft: '6px' }}>{offlineQueueCount}</span>}
           </button>
 
           <button 
             className={`nav-item ${activeSidebarTab === 'settings' ? 'active' : ''}`}
             onClick={() => { setActiveSidebarTab('settings'); setShowPrintInvoice(null); }}
           >
-            🔧 Store settings
+            🔧 Store Settings
           </button>
         </nav>
 
@@ -600,7 +699,30 @@ export default function App() {
           </div>
         )}
 
-        {/* --- 2.1 Tab: Dashboard --- */}
+        {/* Global Connection controller in header for client POS terminal */}
+        {activeSidebarTab === 'pos' && (
+          <div className="client-select-banner" style={{ marginTop: 0, background: 'rgba(255, 255, 255, 0.02)' }}>
+            <div>
+              <h4 style={{ margin: 0 }}>🔌 POS Connection Status</h4>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                Control PRAL/FBR endpoint state to simulate offline store-and-forward queueing.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              <span className={`badge ${fbrConnectionMode === 'online' ? 'badge-success' : 'badge-warning'}`}>
+                {fbrConnectionMode === 'online' ? 'ONLINE SYNC' : 'OFFLINE STORE'}
+              </span>
+              <button 
+                className="btn btn-secondary btn-sm"
+                onClick={() => setFbrConnectionMode(fbrConnectionMode === 'online' ? 'offline' : 'online')}
+              >
+                Toggle {fbrConnectionMode === 'online' ? 'Offline' : 'Online'} Mode
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* --- 2.1 Tab: Dashboard Overview --- */}
         {activeSidebarTab === 'dashboard' && (
           <div>
             <h2 style={{ marginBottom: '24px' }}>Business Metrics Overview ({activeClient.companyName})</h2>
@@ -621,13 +743,59 @@ export default function App() {
               <div className="metric-card">
                 <div className="metric-label">FBR Sync Status</div>
                 <div className="metric-value" style={{ color: 'var(--success)' }}>
-                  {fbrSyncSuccessCount} / {clientInvoices.length} Verified
+                  {fbrSyncSuccessCount} Sync / {offlineQueueCount} Pending
                 </div>
               </div>
             </div>
 
+            {/* SVG Visual Sales Tax chart */}
             <div className="card">
-              <div className="card-title">Recent Invoices Feed</div>
+              <div className="card-title">Daily Sales and Tax Integration Audit Graph</div>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Live visualization of FBR POS Gateway reporting metrics.</p>
+              <svg className="svg-chart" viewBox="0 0 500 150">
+                <path d="M10,130 Q100,60 200,90 T400,20 T490,40" fill="none" stroke="var(--primary)" strokeWidth="3" />
+                <path d="M10,130 Q100,60 200,90 T400,20 T490,40 L490,140 L10,140 Z" fill="rgba(0, 240, 255, 0.03)" />
+                <circle cx="10" cy="130" r="4" fill="var(--accent)" />
+                <circle cx="100" cy="80" r="4" fill="var(--accent)" />
+                <circle cx="200" cy="90" r="4" fill="var(--accent)" />
+                <circle cx="400" cy="20" r="4" fill="var(--accent)" />
+                <circle cx="490" cy="40" r="4" fill="var(--accent)" />
+                <line x1="10" y1="140" x2="490" y2="140" stroke="rgba(255,255,255,0.1)" strokeWidth="1" />
+                <text x="10" y="150" fill="var(--text-muted)" fontSize="9">Mon</text>
+                <text x="100" y="150" fill="var(--text-muted)" fontSize="9">Tue</text>
+                <text x="200" y="150" fill="var(--text-muted)" fontSize="9">Wed</text>
+                <text x="300" y="150" fill="var(--text-muted)" fontSize="9">Thu</text>
+                <text x="400" y="150" fill="var(--text-muted)" fontSize="9">Fri</text>
+                <text x="470" y="150" fill="var(--text-muted)" fontSize="9">Sat/Sun</text>
+              </svg>
+            </div>
+
+            {/* Invoices Feed and ledger filters */}
+            <div className="card">
+              <div className="card-title">
+                <span>Invoices Ledger & Sync Auditing</span>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input 
+                    type="text" 
+                    placeholder="Search by invoice # or name" 
+                    className="form-control" 
+                    style={{ width: '220px', padding: '6px 12px', fontSize: '12px' }}
+                    value={ledgerSearch}
+                    onChange={e => setLedgerSearch(e.target.value)}
+                  />
+                  <select 
+                    className="form-control" 
+                    style={{ width: '150px', padding: '6px 12px', fontSize: '12px' }}
+                    value={ledgerFilterStatus}
+                    onChange={e => setLedgerFilterStatus(e.target.value)}
+                  >
+                    <option value="ALL">All Invoices</option>
+                    <option value="SUCCESS">FBR Success</option>
+                    <option value="OFFLINE_PENDING">Offline Queue</option>
+                    <option value="FAILED">Sync Failed</option>
+                  </select>
+                </div>
+              </div>
               <div className="table-container">
                 <table>
                   <thead>
@@ -635,25 +803,47 @@ export default function App() {
                       <th>Invoice #</th>
                       <th>Customer Name</th>
                       <th>Date</th>
-                      <th>Gross Price</th>
                       <th>GST Tax ({activeClient.salesTaxRate}%)</th>
+                      <th>FBR POS Fee</th>
                       <th>Net Total</th>
                       <th>Status</th>
+                      <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {clientInvoices.slice(0, 5).map(inv => (
+                    {filteredInvoices.map(inv => (
                       <tr key={inv.id}>
                         <td><code>{inv.invoiceNumber}</code></td>
                         <td>{inv.customerName}</td>
                         <td>{inv.date}</td>
-                        <td>Rs. {inv.subtotal}</td>
                         <td>Rs. {inv.salesTax}</td>
+                        <td>Rs. {inv.fbrFee.toFixed(2)}</td>
                         <td><strong>Rs. {inv.total}</strong></td>
                         <td>
-                          <span className={`badge ${inv.fbrStatus === 'SUCCESS' ? 'badge-success' : 'badge-danger'}`}>
+                          <span className={`badge ${
+                            inv.fbrStatus === 'SUCCESS' ? 'badge-success' : 
+                            (inv.fbrStatus === 'OFFLINE_PENDING' ? 'badge-warning' : 'badge-danger')
+                          }`}>
                             {inv.fbrStatus}
                           </span>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              style={{ padding: '4px 8px' }}
+                              onClick={() => setShowPrintInvoice(inv)}
+                            >
+                              📄 Print
+                            </button>
+                            <button
+                              className="btn btn-success btn-sm"
+                              style={{ padding: '4px 8px' }}
+                              onClick={() => handleDownloadInvoiceFile(inv)}
+                            >
+                              ⬇️ Download
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -674,14 +864,23 @@ export default function App() {
                 <div className="card-title">Available Products Inventory</div>
                 <div className="product-catalog-grid">
                   {(products[activeClient.id] || []).map(prod => (
-                    <div key={prod.id} className="product-item-card" onClick={() => addToCart(prod)}>
+                    <div 
+                      key={prod.id} 
+                      className="product-item-card" 
+                      onClick={() => addToCart(prod)}
+                      style={{ opacity: prod.stock === 0 ? 0.6 : 1 }}
+                    >
                       <div>
                         <div className="product-item-name">{prod.name}</div>
                         <div className="product-item-hscode">HS: {prod.hsCode || 'N/A'}</div>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span className="product-item-price">Rs. {prod.price}</span>
-                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Stock: {prod.stock}</span>
+                        {prod.stock === 0 ? (
+                          <span className="badge badge-danger">SOLD OUT</span>
+                        ) : (
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Stock: {prod.stock}</span>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -742,7 +941,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Totals Summary */}
+                  {/* Totals Summary including FBR POS Fee */}
                   {cartItems.length > 0 && (
                     <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '8px', marginBottom: '16px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px' }}>
@@ -753,10 +952,14 @@ export default function App() {
                         <span style={{ color: 'var(--text-secondary)' }}>GST Tax ({activeClient.salesTaxRate}%):</span>
                         <span>Rs. {(cartItems.reduce((s, i) => s + i.subtotal, 0) * (activeClient.salesTaxRate / 100)).toFixed(2)}</span>
                       </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>FBR POS Service Fee:</span>
+                        <span>Rs. 1.00</span>
+                      </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 'bold', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
                         <span>Net Bill:</span>
                         <span style={{ color: 'var(--primary)' }}>
-                          Rs. {(cartItems.reduce((s, i) => s + i.subtotal, 0) * (1 + activeClient.salesTaxRate / 100)).toFixed(2)}
+                          Rs. {(cartItems.reduce((s, i) => s + i.subtotal, 0) * (1 + activeClient.salesTaxRate / 100) + 1.00).toFixed(2)}
                         </span>
                       </div>
                     </div>
@@ -779,9 +982,15 @@ export default function App() {
         {/* View Fiscal Receipt Copy Page */}
         {activeSidebarTab === 'pos' && showPrintInvoice && (
           <div style={{ maxWidth: '600px', margin: '0 auto' }}>
-            <div style={{ marginBottom: '16px' }}>
+            <div style={{ marginBottom: '16px', display: 'flex', gap: '8px' }}>
               <button className="btn btn-secondary btn-sm" onClick={() => setShowPrintInvoice(null)}>
                 ⬅️ Back to POS Terminal Screen
+              </button>
+              <button className="btn btn-primary btn-sm" onClick={() => window.print()}>
+                🖨️ Print Receipt (POS thermal)
+              </button>
+              <button className="btn btn-success btn-sm" onClick={() => handleDownloadInvoiceFile(showPrintInvoice)}>
+                ⬇️ Download Receipt Copy
               </button>
             </div>
             
@@ -838,6 +1047,10 @@ export default function App() {
                   <span>Sales Tax ({activeClient.salesTaxRate}%):</span>
                   <span>Rs. {showPrintInvoice.salesTax}</span>
                 </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>FBR POS Service Fee:</span>
+                  <span>Rs. {showPrintInvoice.fbrFee.toFixed(2)}</span>
+                </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #0f172a', paddingTop: '6px', fontWeight: 'bold', fontSize: '13.5px' }}>
                   <span>Total Amount:</span>
                   <span>Rs. {showPrintInvoice.total}</span>
@@ -861,7 +1074,7 @@ export default function App() {
                     </>
                   ) : (
                     <p style={{ color: 'red', marginTop: '6px' }}>
-                      ⚠️ OFFLINE MODE: Connection to FBR gateway disabled by admin.
+                      ⚠️ OFFLINE MODE: Saved locally. Push from FBR center when online.
                     </p>
                   )}
                 </div>
@@ -921,11 +1134,11 @@ export default function App() {
           </div>
         )}
 
-        {/* --- 2.4 Tab: Customer Loyalty --- */}
+        {/* --- 2.4 Tab: Customer Loyalty Directory --- */}
         {activeSidebarTab === 'customers' && (
           <div className="card">
             <div className="card-title">
-              <span>Merchant Customer loyalty list</span>
+              <span>Merchant Customer Loyalty Directory</span>
               <QuickAddCustomer clientId={activeClient.id} onAdd={cust => addCustomer(activeClient.id, cust)} />
             </div>
 
@@ -952,7 +1165,7 @@ export default function App() {
           </div>
         )}
 
-        {/* --- 2.5 Tab: FBR Integration Hub --- */}
+        {/* --- 2.5 Tab: FBR Integration Hub & Store-Forward Queue --- */}
         {activeSidebarTab === 'fbr_hub' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
             <div className="card">
@@ -964,17 +1177,28 @@ export default function App() {
                     Machine status online. All invoice submissions reported automatically in real-time.
                   </p>
                 </div>
+
+                {offlineQueueCount > 0 && (
+                  <div style={{ padding: '16px', background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.2)', borderRadius: '8px' }}>
+                    <h4 style={{ color: 'var(--warning)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>⚠️ Offline Queue pending: {offlineQueueCount} invoices</span>
+                      <button className="btn btn-primary btn-sm" onClick={handleBulkSyncOfflineQueue}>
+                        Sync Now
+                      </button>
+                    </h4>
+                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                      Store-and-Forward protocol: These receipts were generated during connection disruptions. Click sync to post directly to PRAL database.
+                    </p>
+                  </div>
+                )}
+
                 <div className="form-group">
-                  <label>Current Endpoint URL</label>
+                  <label>Current FBR IMS Endpoint</label>
                   <input type="text" className="form-control" readOnly value={fbrEndpoint} />
                 </div>
                 <div className="form-group">
                   <label>Active License Auth Key</label>
                   <input type="text" className="form-control" readOnly value={activeClient.authKey} />
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
-                  <span>FBR Fiscal Status:</span>
-                  <span className="badge badge-success">INTEGRATED</span>
                 </div>
               </div>
             </div>
