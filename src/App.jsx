@@ -11,6 +11,8 @@ const DEFAULT_CLIENTS = [
     city: 'Karachi',
     address: 'Plot 43, Sector 23, Korangi Industrial Area, Karachi',
     authKey: 'fbr_token_ak_99882233',
+    username: 'alkaram',
+    password: 'alkaram123',
     isActive: true,
     salesTaxRate: 18 // Standard 18% Sales Tax in Pakistan
   },
@@ -22,6 +24,8 @@ const DEFAULT_CLIENTS = [
     city: 'Lahore',
     address: 'Main Boulevard, Gulberg III, Lahore',
     authKey: 'fbr_token_cu_44221100',
+    username: 'chaseup',
+    password: 'chaseup123',
     isActive: true,
     salesTaxRate: 15 // POS integrated retail tier-1 tax rate (15%)
   },
@@ -33,6 +37,8 @@ const DEFAULT_CLIENTS = [
     city: 'Peshawar',
     address: 'University Road, Opposite Peshawar University, Peshawar',
     authKey: 'fbr_token_kf_77334411',
+    username: 'khyber',
+    password: 'khyber123',
     isActive: true,
     salesTaxRate: 18 // Standard 18%
   }
@@ -111,7 +117,17 @@ const DEFAULT_INVOICES = [
 ];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('client'); // 'client' or 'admin'
+  // Authentication & Session state
+  const [currentUser, setCurrentUser] = useState(() => {
+    const saved = localStorage.getItem('fbr_current_user');
+    return saved ? JSON.parse(saved) : null; // null means show login screen
+  });
+  
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+
+  const [activeTab, setActiveTab] = useState('client'); // 'client' or 'admin' (Admin can toggle, Clients locked to client)
   const [activeClient, setActiveClient] = useState(DEFAULT_CLIENTS[0]);
   
   // Database-like states backed by LocalStorage
@@ -190,18 +206,74 @@ export default function App() {
     localStorage.setItem('fbr_logs', JSON.stringify(fbrLogs));
   }, [fbrLogs]);
 
-  // Sync activeClient info when clients update
   useEffect(() => {
-    const fresh = clients.find(c => c.id === activeClient.id);
-    if (fresh) {
-      setActiveClient(fresh);
+    if (currentUser) {
+      localStorage.setItem('fbr_current_user', JSON.stringify(currentUser));
+    } else {
+      localStorage.removeItem('fbr_current_user');
     }
-  }, [clients]);
+  }, [currentUser]);
+
+  // Set initial active Client terminal based on logged-in user
+  useEffect(() => {
+    if (currentUser) {
+      if (currentUser.role === 'admin') {
+        setActiveTab('admin');
+        setActiveClient(clients[0] || null);
+      } else {
+        setActiveTab('client');
+        const matched = clients.find(c => c.id === currentUser.clientId);
+        if (matched) {
+          setActiveClient(matched);
+        }
+      }
+    }
+  }, [currentUser, clients]);
+
+  // Handle Login authentication
+  const handleLogin = (e) => {
+    e.preventDefault();
+    setLoginError('');
+    
+    // Check for Admin
+    if (loginUsername === 'admin' && loginPassword === 'admin123') {
+      setCurrentUser({ role: 'admin', name: 'System Administrator' });
+      return;
+    }
+
+    // Check for Client stores
+    const matchedClient = clients.find(
+      c => c.username === loginUsername && c.password === loginPassword
+    );
+
+    if (matchedClient) {
+      setCurrentUser({
+        role: 'client',
+        clientId: matchedClient.id,
+        name: matchedClient.companyName
+      });
+    } else {
+      setLoginError('Invalid username or password. Please try again.');
+    }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setLoginUsername('');
+    setLoginPassword('');
+    setShowPrintInvoice(null);
+  };
 
   // Client Management Handlers
   const addClient = (clientData) => {
     const newId = 'c' + (clients.length + 1);
-    const newClient = { ...clientData, id: newId, isActive: true };
+    const newClient = { 
+      ...clientData, 
+      id: newId, 
+      isActive: true,
+      username: clientData.companyName.split(' ')[0].toLowerCase(),
+      password: 'client123'
+    };
     setClients([...clients, newClient]);
     setProducts({ ...products, [newId]: [] });
     setCustomers({ ...customers, [newId]: [] });
@@ -265,7 +337,7 @@ export default function App() {
       }))
     };
 
-    const isSuccess = activeClient.isActive; // Simulate FBR API call failing if admin deactivated client POS
+    const isSuccess = activeClient.isActive; // Fails if disabled by admin
     
     const logTime = new Date().toLocaleString();
     const logEntry = {
@@ -329,7 +401,6 @@ export default function App() {
       fbrStatus: 'PENDING'
     };
 
-    // Perform FBR API Call
     const syncRes = handleFbrSync(tempInvoice);
 
     const finalInvoice = {
@@ -350,7 +421,6 @@ export default function App() {
     const prod = (products[activeClient.id] || []).find(p => p.id === currentProdId);
     if (!prod) return;
     
-    // Check if item already exists in current list
     const existing = invoiceItems.find(i => i.name === prod.name);
     if (existing) {
       setInvoiceItems(invoiceItems.map(i => i.name === prod.name ? {
@@ -369,9 +439,73 @@ export default function App() {
     setCurrentQty(1);
   };
 
+  // If not logged in, show the Login Screen
+  if (!currentUser) {
+    return (
+      <div className="app-container" style={{ justifyContent: 'center' }}>
+        <div className="login-wrapper">
+          <div className="login-card">
+            <div className="login-badge">
+              <div className="logo-icon" style={{ margin: '0 auto 16px auto', width: '50px', height: '50px', fontSize: '24px' }}>F</div>
+              <h2 style={{ fontSize: '24px' }}>FBR Sync Gateway</h2>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>
+                Cloud Integrated POS & Billing Portal
+              </p>
+            </div>
+
+            <form onSubmit={handleLogin}>
+              <div className="form-group">
+                <label>Username / Email</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  required
+                  placeholder="Enter login username"
+                  value={loginUsername}
+                  onChange={e => setLoginUsername(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Password</label>
+                <input
+                  type="password"
+                  className="form-control"
+                  required
+                  placeholder="••••••••"
+                  value={loginPassword}
+                  onChange={e => setLoginPassword(e.target.value)}
+                />
+              </div>
+
+              {loginError && (
+                <div style={{ color: 'var(--danger)', fontSize: '13px', marginBottom: '16px', textAlign: 'center' }}>
+                  ⚠️ {loginError}
+                </div>
+              )}
+
+              <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '10px' }}>
+                🔒 Authenticate Securely
+              </button>
+            </form>
+
+            <div className="login-hint">
+              <strong>🔑 Quick Test Credentials:</strong>
+              <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div>• Admin: <code>admin</code> / <code>admin123</code></div>
+                <div>• Al-Karam Store: <code>alkaram</code> / <code>alkaram123</code></div>
+                <div>• Chase Up Store: <code>chaseup</code> / <code>chaseup123</code></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-container">
-      {/* Top Navigation */}
+      {/* Top Header */}
       <header className="header">
         <div className="logo-container">
           <div className="logo-icon">F</div>
@@ -384,32 +518,42 @@ export default function App() {
         </div>
 
         <div className="nav-controls">
-          <div className="tab-group">
-            <button 
-              className={`tab-btn ${activeTab === 'client' ? 'active' : ''}`}
-              onClick={() => { setActiveTab('client'); setShowPrintInvoice(null); }}
-            >
-              💼 Client Terminal
-            </button>
-            <button 
-              className={`tab-btn ${activeTab === 'admin' ? 'active' : ''}`}
-              onClick={() => { setActiveTab('admin'); setShowPrintInvoice(null); }}
-            >
-              🔑 Admin Panel
-            </button>
-          </div>
+          <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+            🟢 Active: <strong>{currentUser.name}</strong> ({currentUser.role.toUpperCase()})
+          </span>
+
+          {currentUser.role === 'admin' && (
+            <div className="tab-group">
+              <button 
+                className={`tab-btn ${activeTab === 'admin' ? 'active' : ''}`}
+                onClick={() => { setActiveTab('admin'); setShowPrintInvoice(null); }}
+              >
+                ⚙️ System Admin
+              </button>
+              <button 
+                className={`tab-btn ${activeTab === 'client' ? 'active' : ''}`}
+                onClick={() => { setActiveTab('client'); setShowPrintInvoice(null); }}
+              >
+                💼 Terminal Emulator
+              </button>
+            </div>
+          )}
+
+          <button className="btn btn-danger btn-sm" onClick={handleLogout}>
+            🚪 Logout
+          </button>
         </div>
       </header>
 
       {/* Main View Grid */}
-      <main style={{ flex: 1 }}>
-        {/* Banner to switch the Active Client Client for Demo ease */}
-        {activeTab === 'client' && (
+      <main style={{ flex: 1, paddingBottom: '40px' }}>
+        {/* Banner to switch Active Client - Only visible for Admin impersonation */}
+        {activeTab === 'client' && currentUser.role === 'admin' && (
           <div className="client-select-banner">
             <div>
-              <h3 style={{ margin: 0, fontSize: '16px' }}>⚡ Demo Invoicing Terminal</h3>
+              <h3 style={{ margin: 0, fontSize: '16px' }}>⚡ Impersonate Client Terminal</h3>
               <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                Select which client invoice screen you want to interact with:
+                System Admin view: Select store to simulate invoicing.
               </p>
             </div>
             <select 
@@ -438,7 +582,7 @@ export default function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
               <div className="card">
                 <div className="card-title">
-                  <span>Create Invoice</span>
+                  <span>Create Invoice ({activeClient.companyName})</span>
                   <span className="badge badge-info">POS ID: {activeClient.posId}</span>
                 </div>
 
@@ -469,12 +613,12 @@ export default function App() {
                   </div>
 
                   {/* Add Product Items */}
-                  <div className="form-group" style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '8px' }}>
+                  <div className="form-group" style={{ background: 'rgba(255,255,255,0.02)', padding: '20px', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
                     <label>2. Add Product Items</label>
                     <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px', alignItems: 'end' }}>
                       <div>
-                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Select Product</span>
-                        <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Select Product</span>
+                        <div style={{ display: 'flex', gap: '6px' }}>
                           <select
                             className="form-control"
                             value={currentProdId}
@@ -495,12 +639,11 @@ export default function App() {
                       </div>
                       
                       <div>
-                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Qty</span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Qty</span>
                         <input
                           type="number"
                           min="1"
                           className="form-control"
-                          style={{ marginTop: '4px' }}
                           value={currentQty}
                           onChange={(e) => setCurrentQty(e.target.value)}
                         />
@@ -519,7 +662,7 @@ export default function App() {
 
                   {/* Invoice Summary Table */}
                   {invoiceItems.length > 0 && (
-                    <div style={{ margin: '20px 0' }}>
+                    <div style={{ margin: '20px 0' }} className="table-container">
                       <table style={{ width: '100%' }}>
                         <thead>
                           <tr>
@@ -667,7 +810,6 @@ export default function App() {
             </div>
             
             <div className="invoice-paper">
-              {/* Receipt Top Header */}
               <div style={{ textAlign: 'center', marginBottom: '24px' }}>
                 <h2 style={{ fontSize: '20px', fontWeight: 'bold' }}>
                   {clients.find(c => c.id === showPrintInvoice.clientId)?.companyName || 'Retail Outlet'}
@@ -681,7 +823,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Invoice Meta info */}
               <div className="invoice-header-grid" style={{ fontSize: '12px', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px' }}>
                 <div>
                   <p><strong>Invoice Number:</strong> {showPrintInvoice.invoiceNumber}</p>
@@ -694,7 +835,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Items Table */}
               <table className="invoice-items-table">
                 <thead>
                   <tr>
@@ -716,7 +856,6 @@ export default function App() {
                 </tbody>
               </table>
 
-              {/* Totals */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '220px', marginLeft: 'auto', marginBottom: '24px', fontSize: '12px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span>Subtotal:</span>
@@ -732,7 +871,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* FBR Fiscal Stamp Section */}
               <div className="fbr-fiscal-details">
                 <div style={{ fontSize: '11px', flex: 1, paddingRight: '12px' }}>
                   <h4 style={{ color: '#059669', display: 'flex', alignItems: 'center', gap: '4px', margin: 0 }}>
@@ -750,7 +888,7 @@ export default function App() {
                     </>
                   ) : (
                     <p style={{ color: 'red', marginTop: '6px' }}>
-                      ⚠️ OFFLINE MODE: Not reported to FBR. Check terminal connection logs.
+                      ⚠️ OFFLINE MODE: Not reported to FBR. Check connection logs.
                     </p>
                   )}
                 </div>
@@ -817,6 +955,7 @@ export default function App() {
                   <thead>
                     <tr>
                       <th>Company Name</th>
+                      <th>Credentials Info</th>
                       <th>NTN</th>
                       <th>FBR POS ID</th>
                       <th>Branch City</th>
@@ -829,6 +968,11 @@ export default function App() {
                     {clients.map(client => (
                       <tr key={client.id}>
                         <td><strong>{client.companyName}</strong></td>
+                        <td>
+                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                            User: <code>{client.username}</code><br/>Pass: <code>{client.password}</code>
+                          </span>
+                        </td>
                         <td>{client.ntn}</td>
                         <td><code>{client.posId}</code></td>
                         <td>{client.city}</td>
