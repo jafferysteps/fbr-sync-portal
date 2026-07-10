@@ -46,19 +46,19 @@ const DEFAULT_CLIENTS = [
 
 const DEFAULT_PRODUCTS = {
   'c1': [
-    { id: 'p1', name: 'Cotton Lawn Fabric (Premium)', price: 1850, unit: 'Meter' },
-    { id: 'p2', name: 'Designer Ready-to-Wear Kurti', price: 4200, unit: 'Piece' },
-    { id: 'p3', name: 'Embroidered Silk Shawl', price: 8500, unit: 'Piece' }
+    { id: 'p1', name: 'Cotton Lawn Fabric (Premium)', price: 1850, unit: 'Meter', stock: 450, hsCode: '5208.3100' },
+    { id: 'p2', name: 'Designer Ready-to-Wear Kurti', price: 4200, unit: 'Piece', stock: 120, hsCode: '6204.4200' },
+    { id: 'p3', name: 'Embroidered Silk Shawl', price: 8500, unit: 'Piece', stock: 65, hsCode: '6214.1000' }
   ],
   'c2': [
-    { id: 'p4', name: 'Basmati Rice Premium (5 Kg)', price: 2150, unit: 'Pack' },
-    { id: 'p5', name: 'Canola Cooking Oil (5 Litre)', price: 3450, unit: 'Pack' },
-    { id: 'p6', name: 'Pakistani Spices Gift Box', price: 950, unit: 'Box' }
+    { id: 'p4', name: 'Basmati Rice Premium (5 Kg)', price: 2150, unit: 'Pack', stock: 300, hsCode: '1006.3010' },
+    { id: 'p5', name: 'Canola Cooking Oil (5 Litre)', price: 3450, unit: 'Pack', stock: 150, hsCode: '1514.1900' },
+    { id: 'p6', name: 'Pakistani Spices Gift Box', price: 950, unit: 'Box', stock: 80, hsCode: '0910.9100' }
   ],
   'c3': [
-    { id: 'p7', name: 'Kabuli Pulao (Special Single)', price: 850, unit: 'Serving' },
-    { id: 'p8', name: 'Mutton Karahi (Full KG)', price: 2800, unit: 'Serving' },
-    { id: 'p9', name: 'Shinwari Tikka (1 Skewer)', price: 450, unit: 'Serving' }
+    { id: 'p7', name: 'Kabuli Pulao (Special Single)', price: 850, unit: 'Serving', stock: 200, hsCode: '2106.9090' },
+    { id: 'p8', name: 'Mutton Karahi (Full KG)', price: 2800, unit: 'Serving', stock: 50, hsCode: '2106.9090' },
+    { id: 'p9', name: 'Shinwari Tikka (1 Skewer)', price: 450, unit: 'Serving', stock: 180, hsCode: '2106.9090' }
   ]
 };
 
@@ -120,20 +120,26 @@ export default function App() {
   // Authentication & Session state
   const [currentUser, setCurrentUser] = useState(() => {
     const saved = localStorage.getItem('fbr_current_user');
-    return saved ? JSON.parse(saved) : null; // null means show login screen
+    return saved ? JSON.parse(saved) : null;
   });
   
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
 
-  const [activeTab, setActiveTab] = useState('client'); // 'client' or 'admin' (Admin can toggle, Clients locked to client)
-  const [activeClient, setActiveClient] = useState(DEFAULT_CLIENTS[0]);
-  
-  // Database-like states backed by LocalStorage
+  // Database-like states backed by LocalStorage, with dynamic upgrade logic
   const [clients, setClients] = useState(() => {
     const saved = localStorage.getItem('fbr_clients');
-    return saved ? JSON.parse(saved) : DEFAULT_CLIENTS;
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // BUG FIX: Detect if existing localStorage has outdated schema without credentials
+      if (parsed.length > 0 && !parsed[0].username) {
+        localStorage.removeItem('fbr_clients');
+        return DEFAULT_CLIENTS;
+      }
+      return parsed;
+    }
+    return DEFAULT_CLIENTS;
   });
   
   const [products, setProducts] = useState(() => {
@@ -181,7 +187,11 @@ export default function App() {
     ];
   });
 
-  // Global FBR Endpoint Config
+  // Client view navigation state
+  const [activeSidebarTab, setActiveSidebarTab] = useState('dashboard'); // 'dashboard', 'pos', 'inventory', 'customers', 'fbr_hub', 'settings', 'admin_panel'
+  const [activeClient, setActiveClient] = useState(DEFAULT_CLIENTS[0]);
+
+  // Global FBR settings
   const [fbrEndpoint, setFbrEndpoint] = useState('https://api.fbr.gov.pk/ims/api/v1/SavePOSInvoice');
   const [fbrEnvironment, setFbrEnvironment] = useState('Sandbox / Testing');
 
@@ -214,14 +224,14 @@ export default function App() {
     }
   }, [currentUser]);
 
-  // Set initial active Client terminal based on logged-in user
+  // Synchronize state based on user role login
   useEffect(() => {
     if (currentUser) {
       if (currentUser.role === 'admin') {
-        setActiveTab('admin');
+        setActiveSidebarTab('admin_panel');
         setActiveClient(clients[0] || null);
       } else {
-        setActiveTab('client');
+        setActiveSidebarTab('dashboard');
         const matched = clients.find(c => c.id === currentUser.clientId);
         if (matched) {
           setActiveClient(matched);
@@ -230,18 +240,18 @@ export default function App() {
     }
   }, [currentUser, clients]);
 
-  // Handle Login authentication
+  // Authenticate user
   const handleLogin = (e) => {
     e.preventDefault();
     setLoginError('');
     
-    // Check for Admin
+    // Admin check
     if (loginUsername === 'admin' && loginPassword === 'admin123') {
       setCurrentUser({ role: 'admin', name: 'System Administrator' });
       return;
     }
 
-    // Check for Client stores
+    // Client stores check
     const matchedClient = clients.find(
       c => c.username === loginUsername && c.password === loginPassword
     );
@@ -253,7 +263,7 @@ export default function App() {
         name: matchedClient.companyName
       });
     } else {
-      setLoginError('Invalid username or password. Please try again.');
+      setLoginError('Invalid credentials. Double check login hints.');
     }
   };
 
@@ -267,12 +277,13 @@ export default function App() {
   // Client Management Handlers
   const addClient = (clientData) => {
     const newId = 'c' + (clients.length + 1);
+    const userAlias = clientData.companyName.split(' ')[0].toLowerCase();
     const newClient = { 
       ...clientData, 
       id: newId, 
       isActive: true,
-      username: clientData.companyName.split(' ')[0].toLowerCase(),
-      password: 'client123'
+      username: userAlias,
+      password: userAlias + '123'
     };
     setClients([...clients, newClient]);
     setProducts({ ...products, [newId]: [] });
@@ -283,10 +294,14 @@ export default function App() {
     setClients(clients.map(c => c.id === clientId ? { ...c, isActive: status } : c));
   };
 
-  // Product Management Handlers
+  // Product Inventory Handlers
   const addProduct = (clientId, product) => {
     const clientProds = products[clientId] || [];
-    const newProduct = { ...product, id: 'p_' + Date.now() };
+    const newProduct = { 
+      ...product, 
+      id: 'p_' + Date.now(),
+      stock: Number(product.stock) || 100 
+    };
     setProducts({
       ...products,
       [clientId]: [...clientProds, newProduct]
@@ -303,104 +318,89 @@ export default function App() {
     });
   };
 
-  // Invoice builder state variables
+  // POS Invoicing Cartesian state
   const [selectedCust, setSelectedCust] = useState('');
-  const [invoiceItems, setInvoiceItems] = useState([]);
-  const [currentProdId, setCurrentProdId] = useState('');
-  const [currentQty, setCurrentQty] = useState(1);
+  const [cartItems, setCartItems] = useState([]);
+  const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [showPrintInvoice, setShowPrintInvoice] = useState(null);
 
-  // FBR simulation call
-  const handleFbrSync = (invoiceData) => {
-    const timestampStr = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
-    const usin = `${activeClient.posId}${timestampStr}`;
-    const fbrFiscalNumber = `FBR-${activeClient.id}-${activeClient.ntn}-${activeClient.posId}-${new Date().toISOString().slice(0,10)}-${Date.now().toString().slice(-6)}`;
-    
-    const requestPayload = {
-      InvoiceNumber: invoiceData.invoiceNumber,
-      POSID: activeClient.posId,
-      USIN: usin,
-      DateTime: invoiceData.date,
-      BuyerNTN: invoiceData.customerNtn || 'N/A',
-      BuyerName: invoiceData.customerName,
-      BuyerPhone: invoiceData.customerPhone || 'N/A',
-      TotalQuantity: invoiceData.items.reduce((sum, item) => sum + item.quantity, 0),
-      TotalBill: invoiceData.total,
-      TaxRate: activeClient.salesTaxRate,
-      SalesTax: invoiceData.salesTax,
-      Items: invoiceData.items.map(item => ({
-        ItemCode: item.name.toLowerCase().replace(/[^a-z0-9]/g, '_'),
-        ItemName: item.name,
-        Quantity: item.quantity,
-        TaxRate: activeClient.salesTaxRate,
-        SalesTax: Math.round(item.price * item.quantity * (activeClient.salesTaxRate / 100))
-      }))
-    };
-
-    const isSuccess = activeClient.isActive; // Fails if disabled by admin
-    
-    const logTime = new Date().toLocaleString();
-    const logEntry = {
-      time: logTime,
-      type: isSuccess ? 'SUCCESS' : 'ERROR',
-      method: 'POST',
-      url: fbrEndpoint,
-      payload: requestPayload,
-      response: isSuccess ? {
-        ResponseCode: '100',
-        ResponseMessage: 'Invoice Reported Successfully to FBR',
-        FBRFiscalNumber: fbrFiscalNumber,
-        USIN: usin,
-        IntegrationStatus: 'Integrated & Verified'
-      } : {
-        ResponseCode: '401',
-        ResponseMessage: 'Unauthorized POS ID. Connection rejected by FBR Gateway.',
-        FBRFiscalNumber: null,
-        USIN: null
-      }
-    };
-
-    setFbrLogs(prev => [logEntry, ...prev]);
-
-    return {
-      success: isSuccess,
-      fiscalNumber: isSuccess ? fbrFiscalNumber : null,
-      usin: isSuccess ? usin : null
-    };
+  const addToCart = (product) => {
+    const existing = cartItems.find(item => item.id === product.id);
+    if (existing) {
+      setCartItems(cartItems.map(item => item.id === product.id ? {
+        ...item,
+        qty: item.qty + 1,
+        subtotal: (item.qty + 1) * item.price
+      } : item));
+    } else {
+      setCartItems([...cartItems, {
+        id: product.id,
+        name: product.name,
+        price: product.price,
+        qty: 1,
+        subtotal: product.price
+      }]);
+    }
   };
 
-  const createInvoice = (e) => {
-    e.preventDefault();
-    if (!selectedCust) {
-      alert('Please select a customer.');
-      return;
+  const updateCartQty = (prodId, delta) => {
+    const matched = cartItems.find(item => item.id === prodId);
+    if (!matched) return;
+    
+    const newQty = matched.qty + delta;
+    if (newQty <= 0) {
+      setCartItems(cartItems.filter(item => item.id !== prodId));
+    } else {
+      setCartItems(cartItems.map(item => item.id === prodId ? {
+        ...item,
+        qty: newQty,
+        subtotal: newQty * item.price
+      } : item));
     }
-    if (invoiceItems.length === 0) {
-      alert('Please add at least one product.');
+  };
+
+  const processCartInvoicing = (e) => {
+    e.preventDefault();
+    if (cartItems.length === 0) {
+      alert('Cart is empty.');
       return;
     }
 
-    const customerObj = (customers[activeClient.id] || []).find(c => c.id === selectedCust);
-    const subtotal = invoiceItems.reduce((sum, item) => sum + item.subtotal, 0);
+    let custName = 'Walk-In Customer';
+    let custPhone = 'N/A';
+    let custNtn = '';
+
+    if (selectedCust) {
+      const match = (customers[activeClient.id] || []).find(c => c.id === selectedCust);
+      if (match) {
+        custName = match.name;
+        custPhone = match.phone;
+        custNtn = match.ntn;
+      }
+    }
+
+    const subtotal = cartItems.reduce((sum, item) => sum + item.subtotal, 0);
     const salesTax = Math.round(subtotal * (activeClient.salesTaxRate / 100) * 100) / 100;
     const total = subtotal + salesTax;
     const invNumber = 'INV-' + new Date().getFullYear() + '-' + String(invoices.length + 1).padStart(4, '0');
-    
+
     const tempInvoice = {
       id: 'inv_' + Date.now(),
       clientId: activeClient.id,
       invoiceNumber: invNumber,
-      customerName: customerObj.name,
-      customerPhone: customerObj.phone,
-      customerNtn: customerObj.ntn,
+      customerName: custName,
+      customerPhone: custPhone,
+      customerNtn: custNtn,
       date: new Date().toISOString().slice(0, 16).replace('T', ' '),
-      items: invoiceItems,
+      items: cartItems.map(i => ({ name: i.name, price: i.price, quantity: i.qty, subtotal: i.subtotal })),
       subtotal,
       salesTax,
       total,
+      paymentMethod,
       fbrStatus: 'PENDING'
     };
 
+    // FBR Gateway Reporting
     const syncRes = handleFbrSync(tempInvoice);
 
     const finalInvoice = {
@@ -411,51 +411,28 @@ export default function App() {
     };
 
     setInvoices(prev => [finalInvoice, ...prev]);
-    setInvoiceItems([]);
+    setCartItems([]);
     setSelectedCust('');
     setShowPrintInvoice(finalInvoice);
   };
 
-  const addItemToInvoice = () => {
-    if (!currentProdId) return;
-    const prod = (products[activeClient.id] || []).find(p => p.id === currentProdId);
-    if (!prod) return;
-    
-    const existing = invoiceItems.find(i => i.name === prod.name);
-    if (existing) {
-      setInvoiceItems(invoiceItems.map(i => i.name === prod.name ? {
-        ...i,
-        quantity: i.quantity + Number(currentQty),
-        subtotal: (i.quantity + Number(currentQty)) * i.price
-      } : i));
-    } else {
-      setInvoiceItems([...invoiceItems, {
-        name: prod.name,
-        price: prod.price,
-        quantity: Number(currentQty),
-        subtotal: prod.price * Number(currentQty)
-      }]);
-    }
-    setCurrentQty(1);
-  };
-
-  // If not logged in, show the Login Screen
+  // If not logged in, render secure Login Panel
   if (!currentUser) {
     return (
       <div className="app-container" style={{ justifyContent: 'center' }}>
         <div className="login-wrapper">
           <div className="login-card">
             <div className="login-badge">
-              <div className="logo-icon" style={{ margin: '0 auto 16px auto', width: '50px', height: '50px', fontSize: '24px' }}>F</div>
-              <h2 style={{ fontSize: '24px' }}>FBR Sync Gateway</h2>
+              <div className="brand-icon" style={{ margin: '0 auto 16px auto', width: '50px', height: '50px', fontSize: '24px' }}>F</div>
+              <h2 style={{ fontSize: '22px' }}>FBR Sync Gateway</h2>
               <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>
-                Cloud Integrated POS & Billing Portal
+                On-Demand Integrated POS Billing Network
               </p>
             </div>
 
             <form onSubmit={handleLogin}>
               <div className="form-group">
-                <label>Username / Email</label>
+                <label>Access Identity</label>
                 <input
                   type="text"
                   className="form-control"
@@ -467,7 +444,7 @@ export default function App() {
               </div>
 
               <div className="form-group">
-                <label>Password</label>
+                <label>Secure Key / Password</label>
                 <input
                   type="password"
                   className="form-control"
@@ -479,22 +456,22 @@ export default function App() {
               </div>
 
               {loginError && (
-                <div style={{ color: 'var(--danger)', fontSize: '13px', marginBottom: '16px', textAlign: 'center' }}>
+                <div style={{ color: 'var(--danger)', fontSize: '12.5px', marginBottom: '16px', textAlign: 'center' }}>
                   ⚠️ {loginError}
                 </div>
               )}
 
               <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '10px' }}>
-                🔒 Authenticate Securely
+                🔒 Secure Portal Login
               </button>
             </form>
 
             <div className="login-hint">
-              <strong>🔑 Quick Test Credentials:</strong>
+              <strong>🔑 Demo Authentication Profiles:</strong>
               <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <div>• Admin: <code>admin</code> / <code>admin123</code></div>
-                <div>• Al-Karam Store: <code>alkaram</code> / <code>alkaram123</code></div>
-                <div>• Chase Up Store: <code>chaseup</code> / <code>chaseup123</code></div>
+                <div>• System Admin: <code>admin</code> / <code>admin123</code></div>
+                <div>• Al-Karam Textiles: <code>alkaram</code> / <code>alkaram123</code></div>
+                <div>• Chase Up Superstore: <code>chaseup</code> / <code>chaseup123</code></div>
               </div>
             </div>
           </div>
@@ -503,57 +480,104 @@ export default function App() {
     );
   }
 
+  // Active client billing metrics calculations
+  const clientInvoices = invoices.filter(inv => inv.clientId === activeClient.id);
+  const totalSalesVal = clientInvoices.reduce((sum, inv) => sum + inv.total, 0);
+  const totalTaxCollected = clientInvoices.reduce((sum, inv) => sum + inv.salesTax, 0);
+  const fbrSyncSuccessCount = clientInvoices.filter(i => i.fbrStatus === 'SUCCESS').length;
+
   return (
-    <div className="app-container">
-      {/* Top Header */}
-      <header className="header">
-        <div className="logo-container">
-          <div className="logo-icon">F</div>
+    <div className="app-wrapper">
+      {/* 1. Sidebar Navigation */}
+      <aside className="sidebar">
+        <div className="brand-container">
+          <div className="brand-icon">F</div>
           <div>
-            <h1 className="logo-text">FBR Sync Portal</h1>
-            <span style={{ fontSize: '10px', color: 'var(--primary)', letterSpacing: '2px', textTransform: 'uppercase' }}>
-              PAKISTAN FISCAL GATEWAY
+            <h2 className="brand-title">FBR Sync</h2>
+            <span style={{ fontSize: '9px', color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '1px' }}>
+              Fiscal POS Portal
             </span>
           </div>
         </div>
 
-        <div className="nav-controls">
-          <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            🟢 Active: <strong>{currentUser.name}</strong> ({currentUser.role.toUpperCase()})
-          </span>
-
+        <nav className="nav-menu">
           {currentUser.role === 'admin' && (
-            <div className="tab-group">
-              <button 
-                className={`tab-btn ${activeTab === 'admin' ? 'active' : ''}`}
-                onClick={() => { setActiveTab('admin'); setShowPrintInvoice(null); }}
-              >
-                ⚙️ System Admin
-              </button>
-              <button 
-                className={`tab-btn ${activeTab === 'client' ? 'active' : ''}`}
-                onClick={() => { setActiveTab('client'); setShowPrintInvoice(null); }}
-              >
-                💼 Terminal Emulator
-              </button>
-            </div>
+            <button 
+              className={`nav-item ${activeSidebarTab === 'admin_panel' ? 'active' : ''}`}
+              onClick={() => { setActiveSidebarTab('admin_panel'); setShowPrintInvoice(null); }}
+            >
+              ⚙️ Admin Console
+            </button>
           )}
 
-          <button className="btn btn-danger btn-sm" onClick={handleLogout}>
-            🚪 Logout
+          <button 
+            className={`nav-item ${activeSidebarTab === 'dashboard' ? 'active' : ''}`}
+            onClick={() => { setActiveSidebarTab('dashboard'); setShowPrintInvoice(null); }}
+          >
+            📊 Dashboard
+          </button>
+
+          <button 
+            className={`nav-item ${activeSidebarTab === 'pos' ? 'active' : ''}`}
+            onClick={() => { setActiveSidebarTab('pos'); setShowPrintInvoice(null); }}
+          >
+            🛒 POS Terminal
+          </button>
+
+          <button 
+            className={`nav-item ${activeSidebarTab === 'inventory' ? 'active' : ''}`}
+            onClick={() => { setActiveSidebarTab('inventory'); setShowPrintInvoice(null); }}
+          >
+            📦 Inventory Catalog
+          </button>
+
+          <button 
+            className={`nav-item ${activeSidebarTab === 'customers' ? 'active' : ''}`}
+            onClick={() => { setActiveSidebarTab('customers'); setShowPrintInvoice(null); }}
+          >
+            👥 Clients Loyalty
+          </button>
+
+          <button 
+            className={`nav-item ${activeSidebarTab === 'fbr_hub' ? 'active' : ''}`}
+            onClick={() => { setActiveSidebarTab('fbr_hub'); setShowPrintInvoice(null); }}
+          >
+            🔌 FBR Sync Center
+          </button>
+
+          <button 
+            className={`nav-item ${activeSidebarTab === 'settings' ? 'active' : ''}`}
+            onClick={() => { setActiveSidebarTab('settings'); setShowPrintInvoice(null); }}
+          >
+            🔧 Store settings
+          </button>
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className="profile-card">
+            <div className="profile-avatar">
+              {currentUser.role === 'admin' ? 'AD' : 'CL'}
+            </div>
+            <div className="profile-info">
+              <div className="profile-name">{currentUser.name}</div>
+              <div className="profile-role">{currentUser.role === 'admin' ? 'System Administrator' : 'Merchant Partner'}</div>
+            </div>
+          </div>
+          <button className="btn btn-danger btn-sm" style={{ width: '100%' }} onClick={handleLogout}>
+            🚪 Logout Securely
           </button>
         </div>
-      </header>
+      </aside>
 
-      {/* Main View Grid */}
-      <main style={{ flex: 1, paddingBottom: '40px' }}>
-        {/* Banner to switch Active Client - Only visible for Admin impersonation */}
-        {activeTab === 'client' && currentUser.role === 'admin' && (
-          <div className="client-select-banner">
+      {/* 2. Main Content Dashboard Container */}
+      <main className="main-content">
+        {/* Switch client selector banner - visible to Admin when emulation is active */}
+        {currentUser.role === 'admin' && activeSidebarTab !== 'admin_panel' && (
+          <div className="client-select-banner" style={{ marginTop: 0 }}>
             <div>
-              <h3 style={{ margin: 0, fontSize: '16px' }}>⚡ Impersonate Client Terminal</h3>
+              <h3 style={{ margin: 0, fontSize: '15px' }}>⚡ Impersonate POS Outlet</h3>
               <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                System Admin view: Select store to simulate invoicing.
+                Viewing mock terminal data for client store settings.
               </p>
             </div>
             <select 
@@ -563,7 +587,7 @@ export default function App() {
                 const selected = clients.find(c => c.id === e.target.value);
                 if (selected) {
                   setActiveClient(selected);
-                  setInvoiceItems([]);
+                  setCartItems([]);
                   setSelectedCust('');
                   setShowPrintInvoice(null);
                 }
@@ -576,261 +600,210 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'client' && !showPrintInvoice && (
-          <div className="dashboard-grid">
-            {/* Left side: Terminal Invoice builder */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-              <div className="card">
-                <div className="card-title">
-                  <span>Create Invoice ({activeClient.companyName})</span>
-                  <span className="badge badge-info">POS ID: {activeClient.posId}</span>
-                </div>
-
-                <form onSubmit={createInvoice}>
-                  <div className="form-row">
-                    {/* Customer Selection */}
-                    <div className="form-group">
-                      <label>1. Customer Detail</label>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <select
-                          className="form-control"
-                          value={selectedCust}
-                          onChange={(e) => setSelectedCust(e.target.value)}
-                        >
-                          <option value="">-- Choose Customer --</option>
-                          {(customers[activeClient.id] || []).map(cust => (
-                            <option key={cust.id} value={cust.id}>
-                              {cust.name} {cust.phone ? `(${cust.phone})` : ''}
-                            </option>
-                          ))}
-                        </select>
-                        <QuickAddCustomer 
-                          clientId={activeClient.id} 
-                          onAdd={(cust) => addCustomer(activeClient.id, cust)} 
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Add Product Items */}
-                  <div className="form-group" style={{ background: 'rgba(255,255,255,0.02)', padding: '20px', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
-                    <label>2. Add Product Items</label>
-                    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px', alignItems: 'end' }}>
-                      <div>
-                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Select Product</span>
-                        <div style={{ display: 'flex', gap: '6px' }}>
-                          <select
-                            className="form-control"
-                            value={currentProdId}
-                            onChange={(e) => setCurrentProdId(e.target.value)}
-                          >
-                            <option value="">-- Choose Product --</option>
-                            {(products[activeClient.id] || []).map(prod => (
-                              <option key={prod.id} value={prod.id}>
-                                {prod.name} (Rs. {prod.price} per {prod.unit})
-                              </option>
-                            ))}
-                          </select>
-                          <QuickAddProduct 
-                            clientId={activeClient.id}
-                            onAdd={(prod) => addProduct(activeClient.id, prod)}
-                          />
-                        </div>
-                      </div>
-                      
-                      <div>
-                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Qty</span>
-                        <input
-                          type="number"
-                          min="1"
-                          className="form-control"
-                          value={currentQty}
-                          onChange={(e) => setCurrentQty(e.target.value)}
-                        />
-                      </div>
-
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={addItemToInvoice}
-                        disabled={!currentProdId}
-                      >
-                        ➕ Add
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Invoice Summary Table */}
-                  {invoiceItems.length > 0 && (
-                    <div style={{ margin: '20px 0' }} className="table-container">
-                      <table style={{ width: '100%' }}>
-                        <thead>
-                          <tr>
-                            <th>Item Name</th>
-                            <th>Price</th>
-                            <th>Qty</th>
-                            <th>Subtotal</th>
-                            <th>Action</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {invoiceItems.map((item, idx) => (
-                            <tr key={idx}>
-                              <td>{item.name}</td>
-                              <td>Rs. {item.price}</td>
-                              <td>{item.quantity}</td>
-                              <td>Rs. {item.subtotal}</td>
-                              <td>
-                                <button
-                                  type="button"
-                                  className="btn btn-danger btn-sm"
-                                  onClick={() => setInvoiceItems(invoiceItems.filter((_, i) => i !== idx))}
-                                >
-                                  ❌ Remove
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-
-                  {/* Pricing and Submit row */}
-                  {invoiceItems.length > 0 && (
-                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '20px', marginTop: '20px' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignSelf: 'flex-end', width: '250px', marginLeft: 'auto', marginBottom: '20px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-secondary)' }}>Subtotal:</span>
-                          <span>Rs. {invoiceItems.reduce((s, i) => s + i.subtotal, 0)}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-secondary)' }}>Sales Tax ({activeClient.salesTaxRate}%):</span>
-                          <span>Rs. {(invoiceItems.reduce((s, i) => s + i.subtotal, 0) * (activeClient.salesTaxRate / 100)).toFixed(2)}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border-color)', paddingTop: '8px', fontWeight: 'bold' }}>
-                          <span>Net Bill:</span>
-                          <span style={{ color: 'var(--primary)' }}>
-                            Rs. {(invoiceItems.reduce((s, i) => s + i.subtotal, 0) * (1 + activeClient.salesTaxRate / 100)).toFixed(2)}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-                        <button
-                          type="submit"
-                          className="btn btn-primary"
-                        >
-                          ⚡ Generate & FBR Sync
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </form>
+        {/* --- 2.1 Tab: Dashboard --- */}
+        {activeSidebarTab === 'dashboard' && (
+          <div>
+            <h2 style={{ marginBottom: '24px' }}>Business Metrics Overview ({activeClient.companyName})</h2>
+            
+            <div className="metrics-row">
+              <div className="metric-card">
+                <div className="metric-label">Total Transactions</div>
+                <div className="metric-value">{clientInvoices.length}</div>
               </div>
-
-              {/* Invoices History list */}
-              <div className="card">
-                <div className="card-title">Invoices History ({activeClient.companyName})</div>
-                <div className="table-container">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Invoice #</th>
-                        <th>Customer</th>
-                        <th>Date</th>
-                        <th>Total Amount</th>
-                        <th>FBR Status</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {invoices.filter(inv => inv.clientId === activeClient.id).map(inv => (
-                        <tr key={inv.id}>
-                          <td>{inv.invoiceNumber}</td>
-                          <td>{inv.customerName}</td>
-                          <td>{inv.date}</td>
-                          <td>Rs. {inv.total}</td>
-                          <td>
-                            <span className={`badge ${inv.fbrStatus === 'SUCCESS' ? 'badge-success' : 'badge-danger'}`}>
-                              {inv.fbrStatus}
-                            </span>
-                          </td>
-                          <td>
-                            <button
-                              className="btn btn-secondary btn-sm"
-                              onClick={() => setShowPrintInvoice(inv)}
-                            >
-                              📄 Print Fiscal Copy
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <div className="metric-card">
+                <div className="metric-label">Gross Sales Val</div>
+                <div className="metric-value">Rs. {totalSalesVal.toLocaleString()}</div>
+              </div>
+              <div className="metric-card">
+                <div className="metric-label">Sales Tax Collected</div>
+                <div className="metric-value">Rs. {totalTaxCollected.toLocaleString()}</div>
+              </div>
+              <div className="metric-card">
+                <div className="metric-label">FBR Sync Status</div>
+                <div className="metric-value" style={{ color: 'var(--success)' }}>
+                  {fbrSyncSuccessCount} / {clientInvoices.length} Verified
                 </div>
               </div>
             </div>
 
-            {/* Right side: FBR Debug Gateway Output */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-              <div className="card">
-                <div className="card-title">FBR Fiscal Integration Log Console</div>
-                <div style={{ marginBottom: '12px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                  <strong>Gateway Endpoint:</strong> <code style={{ fontSize: '11px', color: 'var(--primary)' }}>{fbrEndpoint}</code>
-                </div>
-                <div className="logs-console">
-                  {fbrLogs.map((log, idx) => (
-                    <div key={idx} className={`log-entry ${log.type === 'SUCCESS' ? 'success' : 'error'}`}>
-                      <span className="log-time">[{log.time}]</span>
-                      <strong>{log.method} {log.type}</strong>
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', margin: '4px 0' }}>
-                        Payload sent to FBR gateway:
-                      </div>
-                      <div className="json-block">{JSON.stringify(log.payload, null, 2)}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', margin: '4px 0' }}>
-                        FBR API Gateway Response:
-                      </div>
-                      <div className="json-block">{JSON.stringify(log.response, null, 2)}</div>
-                    </div>
-                  ))}
-                </div>
+            <div className="card">
+              <div className="card-title">Recent Invoices Feed</div>
+              <div className="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Invoice #</th>
+                      <th>Customer Name</th>
+                      <th>Date</th>
+                      <th>Gross Price</th>
+                      <th>GST Tax ({activeClient.salesTaxRate}%)</th>
+                      <th>Net Total</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clientInvoices.slice(0, 5).map(inv => (
+                      <tr key={inv.id}>
+                        <td><code>{inv.invoiceNumber}</code></td>
+                        <td>{inv.customerName}</td>
+                        <td>{inv.date}</td>
+                        <td>Rs. {inv.subtotal}</td>
+                        <td>Rs. {inv.salesTax}</td>
+                        <td><strong>Rs. {inv.total}</strong></td>
+                        <td>
+                          <span className={`badge ${inv.fbrStatus === 'SUCCESS' ? 'badge-success' : 'badge-danger'}`}>
+                            {inv.fbrStatus}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
         )}
 
-        {/* Print Invoice view screen */}
-        {activeTab === 'client' && showPrintInvoice && (
-          <div style={{ maxWidth: '600px', margin: '0 auto 40px auto' }}>
+        {/* --- 2.2 Tab: POS Billing Terminal --- */}
+        {activeSidebarTab === 'pos' && !showPrintInvoice && (
+          <div>
+            <h2 style={{ marginBottom: '20px' }}>POS Billing Desk ({activeClient.companyName})</h2>
+            <div className="pos-grid">
+              {/* Product Catalog */}
+              <div className="card">
+                <div className="card-title">Available Products Inventory</div>
+                <div className="product-catalog-grid">
+                  {(products[activeClient.id] || []).map(prod => (
+                    <div key={prod.id} className="product-item-card" onClick={() => addToCart(prod)}>
+                      <div>
+                        <div className="product-item-name">{prod.name}</div>
+                        <div className="product-item-hscode">HS: {prod.hsCode || 'N/A'}</div>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span className="product-item-price">Rs. {prod.price}</span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Stock: {prod.stock}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Checkout Cart Section */}
+              <div className="cart-panel">
+                <h3 style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.05)', paddingBottom: '12px' }}>Active Checkout Cart</h3>
+                
+                <div className="cart-items-list">
+                  {cartItems.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px 0' }}>
+                      🛒 Click items on left to add to cart
+                    </div>
+                  ) : (
+                    cartItems.map(item => (
+                      <div key={item.id} className="cart-item-row">
+                        <div className="cart-item-info">
+                          <div className="cart-item-title">{item.name}</div>
+                          <div className="cart-item-meta">Rs. {item.price} x {item.qty}</div>
+                        </div>
+                        <div className="cart-item-actions">
+                          <button className="cart-qty-btn" onClick={() => updateCartQty(item.id, -1)}>-</button>
+                          <span style={{ fontSize: '13px', fontWeight: 'bold' }}>{item.qty}</span>
+                          <button className="cart-qty-btn" onClick={() => updateCartQty(item.id, 1)}>+</button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <form onSubmit={processCartInvoicing}>
+                  {/* Select Customer */}
+                  <div className="form-group">
+                    <label>Select Loyalty Customer</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <select 
+                        className="form-control" 
+                        value={selectedCust} 
+                        onChange={e => setSelectedCust(e.target.value)}
+                      >
+                        <option value="">Walk-In Customer</option>
+                        {(customers[activeClient.id] || []).map(c => (
+                          <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>
+                        ))}
+                      </select>
+                      <QuickAddCustomer clientId={activeClient.id} onAdd={cust => addCustomer(activeClient.id, cust)} />
+                    </div>
+                  </div>
+
+                  {/* Payment Method */}
+                  <div className="form-group">
+                    <label>Payment Method</label>
+                    <div className="toggle-group">
+                      <div className={`toggle-item ${paymentMethod === 'Cash' ? 'active' : ''}`} onClick={() => setPaymentMethod('Cash')}>💵 Cash</div>
+                      <div className={`toggle-item ${paymentMethod === 'Card' ? 'active' : ''}`} onClick={() => setPaymentMethod('Card')}>💳 Debit Card</div>
+                    </div>
+                  </div>
+
+                  {/* Totals Summary */}
+                  {cartItems.length > 0 && (
+                    <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '8px', marginBottom: '16px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Subtotal:</span>
+                        <span>Rs. {cartItems.reduce((s, i) => s + i.subtotal, 0)}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>GST Tax ({activeClient.salesTaxRate}%):</span>
+                        <span>Rs. {(cartItems.reduce((s, i) => s + i.subtotal, 0) * (activeClient.salesTaxRate / 100)).toFixed(2)}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 'bold', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
+                        <span>Net Bill:</span>
+                        <span style={{ color: 'var(--primary)' }}>
+                          Rs. {(cartItems.reduce((s, i) => s + i.subtotal, 0) * (1 + activeClient.salesTaxRate / 100)).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  <button 
+                    type="submit" 
+                    className="btn btn-primary" 
+                    style={{ width: '100%' }}
+                    disabled={cartItems.length === 0}
+                  >
+                    ⚡ Process Payment & Sync FBR
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* View Fiscal Receipt Copy Page */}
+        {activeSidebarTab === 'pos' && showPrintInvoice && (
+          <div style={{ maxWidth: '600px', margin: '0 auto' }}>
             <div style={{ marginBottom: '16px' }}>
               <button className="btn btn-secondary btn-sm" onClick={() => setShowPrintInvoice(null)}>
-                ⬅️ Back to Invoice Builder
+                ⬅️ Back to POS Terminal Screen
               </button>
             </div>
             
             <div className="invoice-paper">
-              <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-                <h2 style={{ fontSize: '20px', fontWeight: 'bold' }}>
-                  {clients.find(c => c.id === showPrintInvoice.clientId)?.companyName || 'Retail Outlet'}
-                </h2>
-                <p style={{ color: '#475569', fontSize: '12px' }}>
-                  {clients.find(c => c.id === showPrintInvoice.clientId)?.address || 'Pakistan'}
-                </p>
-                <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginTop: '8px', fontSize: '12px', borderTop: '1px solid #cbd5e1', paddingTop: '8px' }}>
-                  <span><strong>NTN:</strong> {clients.find(c => c.id === showPrintInvoice.clientId)?.ntn}</span>
-                  <span><strong>POS ID:</strong> {clients.find(c => c.id === showPrintInvoice.clientId)?.posId}</span>
+              <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                <h2 style={{ fontSize: '18px', fontWeight: 'bold' }}>{activeClient.companyName}</h2>
+                <p style={{ color: '#475569', fontSize: '11px' }}>{activeClient.address}</p>
+                <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginTop: '6px', fontSize: '11px', borderTop: '1px solid #cbd5e1', paddingTop: '6px' }}>
+                  <span><strong>NTN:</strong> {activeClient.ntn}</span>
+                  <span><strong>POS ID:</strong> {activeClient.posId}</span>
                 </div>
               </div>
 
-              <div className="invoice-header-grid" style={{ fontSize: '12px', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px' }}>
+              <div className="invoice-header-grid" style={{ fontSize: '11.5px', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
                 <div>
                   <p><strong>Invoice Number:</strong> {showPrintInvoice.invoiceNumber}</p>
                   <p><strong>Date & Time:</strong> {showPrintInvoice.date}</p>
+                  <p><strong>Payment Method:</strong> {showPrintInvoice.paymentMethod}</p>
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <p><strong>Customer:</strong> {showPrintInvoice.customerName}</p>
-                  <p><strong>Phone:</strong> {showPrintInvoice.customerPhone || 'N/A'}</p>
+                  <p><strong>Phone:</strong> {showPrintInvoice.customerPhone}</p>
                   {showPrintInvoice.customerNtn && <p><strong>Buyer NTN:</strong> {showPrintInvoice.customerNtn}</p>}
                 </div>
               </div>
@@ -838,8 +811,8 @@ export default function App() {
               <table className="invoice-items-table">
                 <thead>
                   <tr>
-                    <th>Item Description</th>
-                    <th style={{ textAlign: 'right' }}>Rate</th>
+                    <th>Description</th>
+                    <th style={{ textAlign: 'right' }}>Price</th>
                     <th style={{ textAlign: 'center' }}>Qty</th>
                     <th style={{ textAlign: 'right' }}>Total</th>
                   </tr>
@@ -856,16 +829,16 @@ export default function App() {
                 </tbody>
               </table>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '220px', marginLeft: 'auto', marginBottom: '24px', fontSize: '12px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '200px', marginLeft: 'auto', marginBottom: '20px', fontSize: '11.5px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span>Subtotal:</span>
                   <span>Rs. {showPrintInvoice.subtotal}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Sales Tax ({clients.find(c => c.id === showPrintInvoice.clientId)?.salesTaxRate}%):</span>
+                  <span>Sales Tax ({activeClient.salesTaxRate}%):</span>
                   <span>Rs. {showPrintInvoice.salesTax}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #0f172a', paddingTop: '6px', fontWeight: 'bold', fontSize: '14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #0f172a', paddingTop: '6px', fontWeight: 'bold', fontSize: '13.5px' }}>
                   <span>Total Amount:</span>
                   <span>Rs. {showPrintInvoice.total}</span>
                 </div>
@@ -888,7 +861,7 @@ export default function App() {
                     </>
                   ) : (
                     <p style={{ color: 'red', marginTop: '6px' }}>
-                      ⚠️ OFFLINE MODE: Not reported to FBR. Check connection logs.
+                      ⚠️ OFFLINE MODE: Connection to FBR gateway disabled by admin.
                     </p>
                   )}
                 </div>
@@ -905,98 +878,216 @@ export default function App() {
                   )}
                 </div>
               </div>
+            </div>
+          </div>
+        )}
 
-              <div style={{ textAlign: 'center', marginTop: '24px', fontSize: '10px', color: '#64748b' }}>
-                Thank you for shopping with us!<br/>
-                Verified FBR POS Invoicing Software. Developed by FBR Sync Ltd.
+        {/* --- 2.3 Tab: Inventory Management --- */}
+        {activeSidebarTab === 'inventory' && (
+          <div className="card">
+            <div className="card-title">
+              <span>Catalog & Inventory Setup ({activeClient.companyName})</span>
+              <QuickAddProduct clientId={activeClient.id} onAdd={(prod) => addProduct(activeClient.id, prod)} />
+            </div>
+
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Product Name</th>
+                    <th>HS Code (8-Digit)</th>
+                    <th>Price</th>
+                    <th>Unit</th>
+                    <th>Stock Qty</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(products[activeClient.id] || []).map(p => (
+                    <tr key={p.id}>
+                      <td><strong>{p.name}</strong></td>
+                      <td><code>{p.hsCode || 'N/A'}</code></td>
+                      <td>Rs. {p.price}</td>
+                      <td>{p.unit}</td>
+                      <td>
+                        <span className={`badge ${p.stock < 10 ? 'badge-danger' : 'badge-success'}`}>
+                          {p.stock} units
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* --- 2.4 Tab: Customer Loyalty --- */}
+        {activeSidebarTab === 'customers' && (
+          <div className="card">
+            <div className="card-title">
+              <span>Merchant Customer loyalty list</span>
+              <QuickAddCustomer clientId={activeClient.id} onAdd={cust => addCustomer(activeClient.id, cust)} />
+            </div>
+
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Customer Name</th>
+                    <th>Contact Phone</th>
+                    <th>NTN / CNIC No.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(customers[activeClient.id] || []).map(c => (
+                    <tr key={c.id}>
+                      <td><strong>{c.name}</strong></td>
+                      <td>{c.phone || 'N/A'}</td>
+                      <td><code>{c.ntn || 'Walk-In'}</code></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* --- 2.5 Tab: FBR Integration Hub --- */}
+        {activeSidebarTab === 'fbr_hub' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+            <div className="card">
+              <div className="card-title">FBR POS Connectivity Terminal</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ padding: '16px', background: 'rgba(16, 185, 129, 0.05)', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: '8px' }}>
+                  <h4 style={{ color: 'var(--success)' }}>🟢 POS Gateway Operational</h4>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                    Machine status online. All invoice submissions reported automatically in real-time.
+                  </p>
+                </div>
+                <div className="form-group">
+                  <label>Current Endpoint URL</label>
+                  <input type="text" className="form-control" readOnly value={fbrEndpoint} />
+                </div>
+                <div className="form-group">
+                  <label>Active License Auth Key</label>
+                  <input type="text" className="form-control" readOnly value={activeClient.authKey} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                  <span>FBR Fiscal Status:</span>
+                  <span className="badge badge-success">INTEGRATED</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-title">FBR Live API Log Console</div>
+              <div className="logs-console">
+                {fbrLogs.filter(log => log.payload.POSID === activeClient.posId).map((log, idx) => (
+                  <div key={idx} className={`log-entry ${log.type === 'SUCCESS' ? 'success' : 'error'}`}>
+                    <span className="log-time">[{log.time}]</span>
+                    <strong>{log.method} {log.type}</strong>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Payload:</div>
+                    <div className="json-block">{JSON.stringify(log.payload, null, 2)}</div>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Response:</div>
+                    <div className="json-block">{JSON.stringify(log.response, null, 2)}</div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
         )}
 
-        {/* Admin Dashboard view */}
-        {activeTab === 'admin' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-            {/* Top metrics row */}
+        {/* --- 2.6 Tab: Store Settings --- */}
+        {activeSidebarTab === 'settings' && (
+          <div className="card">
+            <div className="card-title">POS Store Setup & Receipt Messaging</div>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Company Display Name</label>
+                <input type="text" className="form-control" defaultValue={activeClient.companyName} />
+              </div>
+              <div className="form-group">
+                <label>Integrated POS ID</label>
+                <input type="text" className="form-control" readOnly defaultValue={activeClient.posId} />
+              </div>
+            </div>
+            <div className="form-group">
+              <label>Outlet Physical Address</label>
+              <input type="text" className="form-control" defaultValue={activeClient.address} />
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Receipt Header Message</label>
+                <input type="text" className="form-control" defaultValue="Welcome to our outlet!" />
+              </div>
+              <div className="form-group">
+                <label>Receipt Footer Message</label>
+                <input type="text" className="form-control" defaultValue="Thank you for shopping with us." />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- 2.7 Tab: Admin Panel --- */}
+        {activeSidebarTab === 'admin_panel' && currentUser.role === 'admin' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             <div className="metrics-row">
               <div className="metric-card">
-                <div className="metric-label">Registered Clients</div>
+                <div className="metric-label">System Active Clients</div>
                 <div className="metric-value">{clients.length}</div>
               </div>
               <div className="metric-card">
-                <div className="metric-label">Total Sync Invoices</div>
-                <div className="metric-value">
-                  {invoices.filter(i => i.fbrStatus === 'SUCCESS').length}
-                </div>
+                <div className="metric-label">Total Sync Ledgers</div>
+                <div className="metric-value">{invoices.filter(i => i.fbrStatus === 'SUCCESS').length}</div>
               </div>
               <div className="metric-card">
-                <div className="metric-label">Total Sales Tax Integrated</div>
-                <div className="metric-value">
-                  Rs. {invoices.filter(i => i.fbrStatus === 'SUCCESS').reduce((sum, i) => sum + i.salesTax, 0).toLocaleString()}
-                </div>
-              </div>
-              <div className="metric-card">
-                <div className="metric-label">Active POS Machines</div>
-                <div className="metric-value">
-                  {clients.filter(c => c.isActive).length} / {clients.length}
-                </div>
+                <div className="metric-label">Collective Sales Tax</div>
+                <div className="metric-value">Rs. {invoices.filter(i => i.fbrStatus === 'SUCCESS').reduce((s, i) => s + i.salesTax, 0).toLocaleString()}</div>
               </div>
             </div>
 
-            {/* Clients Management */}
             <div className="card">
               <div className="card-title">
-                <span>Manage Clients POS Licenses</span>
+                <span>Manage Client Licenses</span>
                 <QuickAddClient onAdd={addClient} />
               </div>
-
               <div className="table-container">
                 <table>
                   <thead>
                     <tr>
-                      <th>Company Name</th>
-                      <th>Credentials Info</th>
+                      <th>Store Merchant</th>
+                      <th>Credentials</th>
                       <th>NTN</th>
-                      <th>FBR POS ID</th>
-                      <th>Branch City</th>
-                      <th>Tax Model</th>
-                      <th>Status</th>
-                      <th>Actions</th>
+                      <th>POS ID</th>
+                      <th>City Location</th>
+                      <th>Sales Tax Rate</th>
+                      <th>Compliance State</th>
+                      <th>Operations</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {clients.map(client => (
-                      <tr key={client.id}>
-                        <td><strong>{client.companyName}</strong></td>
+                    {clients.map(c => (
+                      <tr key={c.id}>
+                        <td><strong>{c.companyName}</strong></td>
                         <td>
                           <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                            User: <code>{client.username}</code><br/>Pass: <code>{client.password}</code>
+                            User: <code>{c.username}</code><br/>Pass: <code>{c.password}</code>
                           </span>
                         </td>
-                        <td>{client.ntn}</td>
-                        <td><code>{client.posId}</code></td>
-                        <td>{client.city}</td>
-                        <td>{client.salesTaxRate}% Sales Tax</td>
+                        <td>{c.ntn}</td>
+                        <td><code>{c.posId}</code></td>
+                        <td>{c.city}</td>
+                        <td>{c.salesTaxRate}% GST</td>
                         <td>
-                          <span className={`badge ${client.isActive ? 'badge-success' : 'badge-danger'}`}>
-                            {client.isActive ? 'Active Integration' : 'Disabled'}
+                          <span className={`badge ${c.isActive ? 'badge-success' : 'badge-danger'}`}>
+                            {c.isActive ? 'Integrated' : 'Disabled'}
                           </span>
                         </td>
                         <td>
-                          {client.isActive ? (
-                            <button 
-                              className="btn btn-danger btn-sm"
-                              onClick={() => updateClientStatus(client.id, false)}
-                            >
-                              Deactivate POS
-                            </button>
+                          {c.isActive ? (
+                            <button className="btn btn-danger btn-sm" onClick={() => updateClientStatus(c.id, false)}>Disable POS</button>
                           ) : (
-                            <button 
-                              className="btn btn-success btn-sm"
-                              onClick={() => updateClientStatus(client.id, true)}
-                            >
-                              Activate POS
-                            </button>
+                            <button className="btn btn-success btn-sm" onClick={() => updateClientStatus(c.id, true)}>Enable POS</button>
                           )}
                         </td>
                       </tr>
@@ -1006,7 +1097,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* FBR Gateway Configuration Panel */}
             <div className="card">
               <div className="card-title">FBR Global Web API Gateway Config</div>
               <div className="form-row">
@@ -1031,46 +1121,7 @@ export default function App() {
                   </select>
                 </div>
               </div>
-              <div style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
-                💡 <strong>Important Note:</strong> Each POS machine must register its POS ID directly on the FBR portal to get authorization headers. Keep the FBR Endpoint to testing URLs during client onboarding.
-              </div>
             </div>
-
-            {/* All Invoices Master Ledger */}
-            <div className="card">
-              <div className="card-title">System-Wide FBR Ledger</div>
-              <div className="table-container">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Merchant</th>
-                      <th>Invoice #</th>
-                      <th>Date</th>
-                      <th>Total Amount</th>
-                      <th>Tax Amount</th>
-                      <th>FBR Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {invoices.map(inv => (
-                      <tr key={inv.id}>
-                        <td><strong>{clients.find(c => c.id === inv.clientId)?.companyName}</strong></td>
-                        <td>{inv.invoiceNumber}</td>
-                        <td>{inv.date}</td>
-                        <td>Rs. {inv.total}</td>
-                        <td>Rs. {inv.salesTax}</td>
-                        <td>
-                          <span className={`badge ${inv.fbrStatus === 'SUCCESS' ? 'badge-success' : 'badge-danger'}`}>
-                            {inv.fbrStatus}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
           </div>
         )}
       </main>
@@ -1103,7 +1154,7 @@ function QuickAddCustomer({ clientId, onAdd }) {
       {isOpen && (
         <div className="modal-overlay">
           <div className="modal-content">
-            <h3 style={{ marginBottom: '16px' }}>Add Customer</h3>
+            <h3 style={{ marginBottom: '16px' }}>Add Loyalty Customer</h3>
             <form onSubmit={submit}>
               <div className="form-group">
                 <label>Customer Name *</label>
@@ -1115,7 +1166,7 @@ function QuickAddCustomer({ clientId, onAdd }) {
               </div>
               <div className="form-group">
                 <label>Customer NTN / CNIC</label>
-                <input type="text" className="form-control" placeholder="Optional" value={ntn} onChange={e => setNtn(e.target.value)} />
+                <input type="text" className="form-control" placeholder="e.g. 1234567-8" value={ntn} onChange={e => setNtn(e.target.value)} />
               </div>
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '24px' }}>
                 <button type="button" className="btn btn-secondary btn-sm" onClick={() => setIsOpen(false)}>Cancel</button>
@@ -1135,26 +1186,29 @@ function QuickAddProduct({ clientId, onAdd }) {
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [unit, setUnit] = useState('Piece');
+  const [hsCode, setHsCode] = useState('5208.3100');
+  const [stock, setStock] = useState(100);
 
   const submit = (e) => {
     e.preventDefault();
     if (!name || !price) return;
-    onAdd({ name, price: Number(price), unit });
+    onAdd({ name, price: Number(price), unit, hsCode, stock });
     setName('');
     setPrice('');
     setUnit('Piece');
+    setStock(100);
     setIsOpen(false);
   };
 
   return (
     <>
-      <button type="button" className="btn btn-secondary" onClick={() => setIsOpen(true)}>
-        ➕ New
+      <button type="button" className="btn btn-primary btn-sm" onClick={() => setIsOpen(true)}>
+        ➕ New Product
       </button>
       {isOpen && (
         <div className="modal-overlay">
           <div className="modal-content">
-            <h3 style={{ marginBottom: '16px' }}>Add Product</h3>
+            <h3 style={{ marginBottom: '16px' }}>Add Product to Catalog</h3>
             <form onSubmit={submit}>
               <div className="form-group">
                 <label>Product Name *</label>
@@ -1164,6 +1218,16 @@ function QuickAddProduct({ clientId, onAdd }) {
                 <div className="form-group">
                   <label>Unit Price (Rs.) *</label>
                   <input type="number" className="form-control" required value={price} onChange={e => setPrice(e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label>HS Code (8-Digit)</label>
+                  <input type="text" className="form-control" value={hsCode} onChange={e => setHsCode(e.target.value)} />
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Initial Stock Qty</label>
+                  <input type="number" className="form-control" value={stock} onChange={e => setStock(e.target.value)} />
                 </div>
                 <div className="form-group">
                   <label>Selling Unit</label>
@@ -1219,7 +1283,7 @@ function QuickAddClient({ onAdd }) {
   return (
     <>
       <button type="button" className="btn btn-primary btn-sm" onClick={() => setIsOpen(true)}>
-        ➕ Register Client POS License
+        ➕ Onboard Client POS Machine
       </button>
       {isOpen && (
         <div className="modal-overlay">
