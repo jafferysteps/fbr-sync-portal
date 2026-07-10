@@ -131,17 +131,6 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
 
-  // Active terminal client
-  const [activeSidebarTab, setActiveSidebarTab] = useState('dashboard');
-  const [activeClient, setActiveClient] = useState(DEFAULT_CLIENTS[0]);
-
-  // FBR Connection Mode: Online or Offline
-  const [fbrConnectionMode, setFbrConnectionMode] = useState('online');
-
-  // Ledger Filter states
-  const [ledgerSearch, setLedgerSearch] = useState('');
-  const [ledgerFilterStatus, setLedgerFilterStatus] = useState('ALL');
-
   // Database-like states backed by LocalStorage, with dynamic upgrade logic
   const [clients, setClients] = useState(() => {
     const saved = localStorage.getItem('fbr_clients');
@@ -176,9 +165,32 @@ export default function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
+  // Client view navigation state
+  const [activeSidebarTab, setActiveSidebarTab] = useState('dashboard');
+  const [activeClient, setActiveClient] = useState(DEFAULT_CLIENTS[0]);
+
+  // FBR Connection Mode: Online or Offline
+  const [fbrConnectionMode, setFbrConnectionMode] = useState('online');
+
+  // Ledger Filter states
+  const [ledgerSearch, setLedgerSearch] = useState('');
+  const [ledgerFilterStatus, setLedgerFilterStatus] = useState('ALL');
+
   // Global FBR settings
   const [fbrEndpoint, setFbrEndpoint] = useState('https://api.fbr.gov.pk/ims/api/v1/SavePOSInvoice');
   const [fbrEnvironment, setFbrEnvironment] = useState('Sandbox / Testing');
+
+  // Clear all schemas if user request forces a hard reset
+  const handleForceClearCache = () => {
+    localStorage.clear();
+    setClients(DEFAULT_CLIENTS);
+    setProducts(DEFAULT_PRODUCTS);
+    setCustomers(DEFAULT_CUSTOMERS);
+    setInvoices(DEFAULT_INVOICES);
+    setFbrLogs([]);
+    setCurrentUser(null);
+    window.location.reload();
+  };
 
   // Persistence Effects
   useEffect(() => {
@@ -214,12 +226,14 @@ export default function App() {
     if (currentUser) {
       if (currentUser.role === 'admin') {
         setActiveSidebarTab('admin_panel');
-        setActiveClient(clients[0] || null);
+        setActiveClient(clients[0] || DEFAULT_CLIENTS[0]);
       } else {
         setActiveSidebarTab('dashboard');
         const matched = clients.find(c => c.id === currentUser.clientId);
         if (matched) {
           setActiveClient(matched);
+        } else {
+          setActiveClient(clients[0] || DEFAULT_CLIENTS[0]);
         }
       }
     }
@@ -308,7 +322,6 @@ export default function App() {
   const [showPrintInvoice, setShowPrintInvoice] = useState(null);
 
   const addToCart = (product) => {
-    // Check if stock is available
     const existing = cartItems.find(item => item.id === product.id);
     const activeQty = existing ? existing.qty : 0;
     
@@ -338,9 +351,8 @@ export default function App() {
     const matched = cartItems.find(item => item.id === prodId);
     if (!matched) return;
 
-    // Check inventory ceiling for increase
     if (delta > 0) {
-      const dbProd = (products[activeClient.id] || []).find(p => p.id === prodId);
+      const dbProd = (products[activeClient?.id || ''] || []).find(p => p.id === prodId);
       if (dbProd && matched.qty >= dbProd.stock) {
         alert(`Out of stock limit! Maximum ${dbProd.stock} units allowed.`);
         return;
@@ -364,12 +376,12 @@ export default function App() {
     const isOnline = isForcedOnline || (fbrConnectionMode === 'online');
     
     const timestampStr = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
-    const usin = `${activeClient.posId}${timestampStr}`;
-    const fbrFiscalNumber = `FBR-${activeClient.id}-${activeClient.ntn}-${activeClient.posId}-${new Date().toISOString().slice(0,10)}-${Date.now().toString().slice(-6)}`;
+    const usin = `${activeClient?.posId || '000000'}${timestampStr}`;
+    const fbrFiscalNumber = `FBR-${activeClient?.id || 'c0'}-${activeClient?.ntn || '0000000-0'}-${activeClient?.posId || '000000'}-${new Date().toISOString().slice(0,10)}-${Date.now().toString().slice(-6)}`;
     
     const requestPayload = {
       InvoiceNumber: invoiceData.invoiceNumber,
-      POSID: activeClient.posId,
+      POSID: activeClient?.posId || '000000',
       USIN: usin,
       DateTime: invoiceData.date,
       BuyerNTN: invoiceData.customerNtn || 'N/A',
@@ -377,20 +389,19 @@ export default function App() {
       BuyerPhone: invoiceData.customerPhone || 'N/A',
       TotalQuantity: invoiceData.items.reduce((sum, item) => sum + item.quantity, 0),
       TotalBill: invoiceData.total,
-      TaxRate: activeClient.salesTaxRate,
+      TaxRate: activeClient?.salesTaxRate || 18,
       SalesTax: invoiceData.salesTax,
       POSServiceFee: 1.00,
       Items: invoiceData.items.map(item => ({
         ItemCode: item.name.toLowerCase().replace(/[^a-z0-9]/g, '_'),
         ItemName: item.name,
         Quantity: item.quantity,
-        TaxRate: activeClient.salesTaxRate,
-        SalesTax: Math.round(item.price * item.quantity * (activeClient.salesTaxRate / 100))
+        TaxRate: activeClient?.salesTaxRate || 18,
+        SalesTax: Math.round(item.price * item.quantity * ((activeClient?.salesTaxRate || 18) / 100))
       }))
     };
 
-    // Fails if store disabled by admin OR offline mode selected
-    const isSuccess = activeClient.isActive && isOnline;
+    const isSuccess = activeClient?.isActive && isOnline;
     
     const logTime = new Date().toLocaleString();
     const logEntry = {
@@ -438,7 +449,7 @@ export default function App() {
     let custNtn = '';
 
     if (selectedCust) {
-      const match = (customers[activeClient.id] || []).find(c => c.id === selectedCust);
+      const match = (customers[activeClient?.id || ''] || []).find(c => c.id === selectedCust);
       if (match) {
         custName = match.name;
         custPhone = match.phone;
@@ -447,14 +458,14 @@ export default function App() {
     }
 
     const subtotal = cartItems.reduce((sum, item) => sum + item.subtotal, 0);
-    const salesTax = Math.round(subtotal * (activeClient.salesTaxRate / 100) * 100) / 100;
+    const salesTax = Math.round(subtotal * ((activeClient?.salesTaxRate || 18) / 100) * 100) / 100;
     const fbrFee = 1.00; // Mandatory Rs. 1 POS fee
     const total = subtotal + salesTax + fbrFee;
     const invNumber = 'INV-' + new Date().getFullYear() + '-' + String(invoices.length + 1).padStart(4, '0');
 
     const tempInvoice = {
       id: 'inv_' + Date.now(),
-      clientId: activeClient.id,
+      clientId: activeClient?.id || 'c1',
       invoiceNumber: invNumber,
       customerName: custName,
       customerPhone: custPhone,
@@ -470,7 +481,7 @@ export default function App() {
     };
 
     // Deduct stock levels in local store database
-    const storeProds = products[activeClient.id] || [];
+    const storeProds = products[activeClient?.id || ''] || [];
     const updatedProds = storeProds.map(p => {
       const cartMatch = cartItems.find(c => c.id === p.id);
       if (cartMatch) {
@@ -478,7 +489,7 @@ export default function App() {
       }
       return p;
     });
-    setProducts({ ...products, [activeClient.id]: updatedProds });
+    setProducts({ ...products, [activeClient?.id || '']: updatedProds });
 
     // FBR Sync
     const syncRes = handleFbrSync(tempInvoice);
@@ -499,7 +510,7 @@ export default function App() {
   // Sync Offline Queue handler
   const handleBulkSyncOfflineQueue = () => {
     const offlineInvoices = invoices.filter(
-      i => i.clientId === activeClient.id && i.fbrStatus === 'OFFLINE_PENDING'
+      i => i.clientId === activeClient?.id && i.fbrStatus === 'OFFLINE_PENDING'
     );
 
     if (offlineInvoices.length === 0) {
@@ -508,8 +519,7 @@ export default function App() {
     }
 
     const updatedInvoices = invoices.map(inv => {
-      if (inv.clientId === activeClient.id && inv.fbrStatus === 'OFFLINE_PENDING') {
-        // Post live to FBR Gateway
+      if (inv.clientId === activeClient?.id && inv.fbrStatus === 'OFFLINE_PENDING') {
         const syncRes = handleFbrSync(inv, true); // force online posting
         return {
           ...inv,
@@ -530,10 +540,10 @@ export default function App() {
     const el = document.createElement("a");
     const receiptText = `
 ========================================
-       ${activeClient.companyName}
+       ${activeClient?.companyName || 'Retail Store'}
 ========================================
-Address: ${activeClient.address}
-NTN: ${activeClient.ntn}   POS ID: ${activeClient.posId}
+Address: ${activeClient?.address || 'Pakistan'}
+NTN: ${activeClient?.ntn || '0000000'}   POS ID: ${activeClient?.posId || '000'}
 ----------------------------------------
 Invoice #: ${invoice.invoiceNumber}
 Date: ${invoice.date}
@@ -545,7 +555,7 @@ Items:
 ${invoice.items.map(item => `${item.name.padEnd(25)} Rs. ${item.price} x ${item.quantity} = Rs. ${item.subtotal}`).join('\n')}
 ----------------------------------------
 Subtotal:                    Rs. ${invoice.subtotal}
-Sales Tax (${activeClient.salesTaxRate}%):           Rs. ${invoice.salesTax}
+Sales Tax (${activeClient?.salesTaxRate || 18}%):           Rs. ${invoice.salesTax}
 FBR POS Fee:                 Rs. ${invoice.fbrFee}
 ----------------------------------------
 NET BILL TOTAL:              Rs. ${invoice.total}
@@ -565,25 +575,98 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
     document.body.removeChild(el);
   };
 
-  // Filtered Ledger list
+  // Filtered Ledger list (safely handles missing values)
   const filteredInvoices = invoices.filter(inv => {
-    if (currentUser.role !== 'admin' && inv.clientId !== activeClient.id) return false;
+    if (currentUser && currentUser.role !== 'admin' && inv.clientId !== activeClient?.id) return false;
     
-    // Search filter
-    const matchesSearch = inv.invoiceNumber.toLowerCase().includes(ledgerSearch.toLowerCase()) || 
-                          inv.customerName.toLowerCase().includes(ledgerSearch.toLowerCase());
+    const matchesSearch = (inv.invoiceNumber || '').toLowerCase().includes(ledgerSearch.toLowerCase()) || 
+                          (inv.customerName || '').toLowerCase().includes(ledgerSearch.toLowerCase());
     
-    // Status filter
     if (ledgerFilterStatus === 'ALL') return matchesSearch;
     return matchesSearch && (inv.fbrStatus === ledgerFilterStatus);
   });
 
-  // Active client billing metrics calculations
-  const clientInvoices = invoices.filter(inv => inv.clientId === activeClient.id);
-  const totalSalesVal = clientInvoices.reduce((sum, inv) => sum + inv.total, 0);
-  const totalTaxCollected = clientInvoices.reduce((sum, inv) => sum + inv.salesTax, 0);
+  // Active client billing metrics calculations (safely handles null values)
+  const clientInvoices = invoices.filter(inv => inv.clientId === activeClient?.id);
+  const totalSalesVal = clientInvoices.reduce((sum, inv) => sum + (inv.total || 0), 0);
+  const totalTaxCollected = clientInvoices.reduce((sum, inv) => sum + (inv.salesTax || 0), 0);
   const fbrSyncSuccessCount = clientInvoices.filter(i => i.fbrStatus === 'SUCCESS').length;
   const offlineQueueCount = clientInvoices.filter(i => i.fbrStatus === 'OFFLINE_PENDING').length;
+
+  // If not logged in, render secure Login Panel
+  if (!currentUser) {
+    return (
+      <div className="app-container" style={{ justifyContent: 'center' }}>
+        <div className="login-wrapper">
+          <div className="login-card">
+            <div className="login-badge">
+              <div className="brand-icon" style={{ margin: '0 auto 16px auto', width: '50px', height: '50px', fontSize: '24px' }}>F</div>
+              <h2 style={{ fontSize: '22px' }}>FBR Sync Gateway</h2>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>
+                On-Demand Integrated POS Billing Network
+              </p>
+            </div>
+
+            <form onSubmit={handleLogin}>
+              <div className="form-group">
+                <label>Access Identity</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  required
+                  placeholder="Enter login username"
+                  value={loginUsername}
+                  onChange={e => setLoginUsername(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Secure Key / Password</label>
+                <input
+                  type="password"
+                  className="form-control"
+                  required
+                  placeholder="••••••••"
+                  value={loginPassword}
+                  onChange={e => setLoginPassword(e.target.value)}
+                />
+              </div>
+
+              {loginError && (
+                <div style={{ color: 'var(--danger)', fontSize: '12.5px', marginBottom: '16px', textAlign: 'center' }}>
+                  ⚠️ {loginError}
+                </div>
+              )}
+
+              <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '10px' }}>
+                🔒 Secure Portal Login
+              </button>
+            </form>
+
+            <div className="login-hint">
+              <strong>🔑 Demo Authentication Profiles:</strong>
+              <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div>• System Admin: <code>admin</code> / <code>admin123</code></div>
+                <div>• Al-Karam Textiles: <code>alkaram</code> / <code>alkaram123</code></div>
+                <div>• Chase Up Superstore: <code>chaseup</code> / <code>chaseup123</code></div>
+              </div>
+            </div>
+
+            <div style={{ marginTop: '20px', textAlign: 'center' }}>
+              <button 
+                type="button" 
+                className="btn btn-danger btn-sm" 
+                style={{ fontSize: '10px', padding: '4px 8px' }}
+                onClick={handleForceClearCache}
+              >
+                ⚠️ Reset App Cache (If Logins Fail)
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-wrapper">
@@ -681,7 +764,7 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
             </div>
             <select 
               className="client-dropdown"
-              value={activeClient.id}
+              value={activeClient?.id || ''}
               onChange={(e) => {
                 const selected = clients.find(c => c.id === e.target.value);
                 if (selected) {
@@ -725,7 +808,7 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
         {/* --- 2.1 Tab: Dashboard Overview --- */}
         {activeSidebarTab === 'dashboard' && (
           <div>
-            <h2 style={{ marginBottom: '24px' }}>Business Metrics Overview ({activeClient.companyName})</h2>
+            <h2 style={{ marginBottom: '24px' }}>Business Metrics Overview ({activeClient?.companyName || 'Store'})</h2>
             
             <div className="metrics-row">
               <div className="metric-card">
@@ -803,7 +886,7 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
                       <th>Invoice #</th>
                       <th>Customer Name</th>
                       <th>Date</th>
-                      <th>GST Tax ({activeClient.salesTaxRate}%)</th>
+                      <th>GST Tax ({activeClient?.salesTaxRate || 18}%)</th>
                       <th>FBR POS Fee</th>
                       <th>Net Total</th>
                       <th>Status</th>
@@ -817,7 +900,7 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
                         <td>{inv.customerName}</td>
                         <td>{inv.date}</td>
                         <td>Rs. {inv.salesTax}</td>
-                        <td>Rs. {inv.fbrFee.toFixed(2)}</td>
+                        <td>Rs. {inv.fbrFee ? inv.fbrFee.toFixed(2) : '1.00'}</td>
                         <td><strong>Rs. {inv.total}</strong></td>
                         <td>
                           <span className={`badge ${
@@ -857,13 +940,13 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
         {/* --- 2.2 Tab: POS Billing Terminal --- */}
         {activeSidebarTab === 'pos' && !showPrintInvoice && (
           <div>
-            <h2 style={{ marginBottom: '20px' }}>POS Billing Desk ({activeClient.companyName})</h2>
+            <h2 style={{ marginBottom: '20px' }}>POS Billing Desk ({activeClient?.companyName || 'Store'})</h2>
             <div className="pos-grid">
               {/* Product Catalog */}
               <div className="card">
                 <div className="card-title">Available Products Inventory</div>
                 <div className="product-catalog-grid">
-                  {(products[activeClient.id] || []).map(prod => (
+                  {(products[activeClient?.id || ''] || []).map(prod => (
                     <div 
                       key={prod.id} 
                       className="product-item-card" 
@@ -904,9 +987,9 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
                           <div className="cart-item-meta">Rs. {item.price} x {item.qty}</div>
                         </div>
                         <div className="cart-item-actions">
-                          <button className="cart-qty-btn" onClick={() => updateCartQty(item.id, -1)}>-</button>
+                          <button className="cart-qty-btn" type="button" onClick={() => updateCartQty(item.id, -1)}>-</button>
                           <span style={{ fontSize: '13px', fontWeight: 'bold' }}>{item.qty}</span>
-                          <button className="cart-qty-btn" onClick={() => updateCartQty(item.id, 1)}>+</button>
+                          <button className="cart-qty-btn" type="button" onClick={() => updateCartQty(item.id, 1)}>+</button>
                         </div>
                       </div>
                     ))
@@ -924,11 +1007,11 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
                         onChange={e => setSelectedCust(e.target.value)}
                       >
                         <option value="">Walk-In Customer</option>
-                        {(customers[activeClient.id] || []).map(c => (
+                        {(customers[activeClient?.id || ''] || []).map(c => (
                           <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>
                         ))}
                       </select>
-                      <QuickAddCustomer clientId={activeClient.id} onAdd={cust => addCustomer(activeClient.id, cust)} />
+                      <QuickAddCustomer clientId={activeClient?.id || ''} onAdd={cust => addCustomer(activeClient?.id || '', cust)} />
                     </div>
                   </div>
 
@@ -949,8 +1032,8 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
                         <span>Rs. {cartItems.reduce((s, i) => s + i.subtotal, 0)}</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px' }}>
-                        <span style={{ color: 'var(--text-secondary)' }}>GST Tax ({activeClient.salesTaxRate}%):</span>
-                        <span>Rs. {(cartItems.reduce((s, i) => s + i.subtotal, 0) * (activeClient.salesTaxRate / 100)).toFixed(2)}</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>GST Tax ({activeClient?.salesTaxRate || 18}%):</span>
+                        <span>Rs. {(cartItems.reduce((s, i) => s + i.subtotal, 0) * ((activeClient?.salesTaxRate || 18) / 100)).toFixed(2)}</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px' }}>
                         <span style={{ color: 'var(--text-secondary)' }}>FBR POS Service Fee:</span>
@@ -959,7 +1042,7 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 'bold', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
                         <span>Net Bill:</span>
                         <span style={{ color: 'var(--primary)' }}>
-                          Rs. {(cartItems.reduce((s, i) => s + i.subtotal, 0) * (1 + activeClient.salesTaxRate / 100) + 1.00).toFixed(2)}
+                          Rs. {(cartItems.reduce((s, i) => s + i.subtotal, 0) * (1 + (activeClient?.salesTaxRate || 18) / 100) + 1.00).toFixed(2)}
                         </span>
                       </div>
                     </div>
@@ -996,11 +1079,11 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
             
             <div className="invoice-paper">
               <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-                <h2 style={{ fontSize: '18px', fontWeight: 'bold' }}>{activeClient.companyName}</h2>
-                <p style={{ color: '#475569', fontSize: '11px' }}>{activeClient.address}</p>
+                <h2 style={{ fontSize: '18px', fontWeight: 'bold' }}>{activeClient?.companyName || 'Retail Outlet'}</h2>
+                <p style={{ color: '#475569', fontSize: '11px' }}>{activeClient?.address}</p>
                 <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginTop: '6px', fontSize: '11px', borderTop: '1px solid #cbd5e1', paddingTop: '6px' }}>
-                  <span><strong>NTN:</strong> {activeClient.ntn}</span>
-                  <span><strong>POS ID:</strong> {activeClient.posId}</span>
+                  <span><strong>NTN:</strong> {activeClient?.ntn}</span>
+                  <span><strong>POS ID:</strong> {activeClient?.posId}</span>
                 </div>
               </div>
 
@@ -1044,12 +1127,12 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
                   <span>Rs. {showPrintInvoice.subtotal}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Sales Tax ({activeClient.salesTaxRate}%):</span>
+                  <span>Sales Tax ({activeClient?.salesTaxRate || 18}%):</span>
                   <span>Rs. {showPrintInvoice.salesTax}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span>FBR POS Service Fee:</span>
-                  <span>Rs. {showPrintInvoice.fbrFee.toFixed(2)}</span>
+                  <span>Rs. {showPrintInvoice.fbrFee ? showPrintInvoice.fbrFee.toFixed(2) : '1.00'}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #0f172a', paddingTop: '6px', fontWeight: 'bold', fontSize: '13.5px' }}>
                   <span>Total Amount:</span>
@@ -1099,8 +1182,8 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
         {activeSidebarTab === 'inventory' && (
           <div className="card">
             <div className="card-title">
-              <span>Catalog & Inventory Setup ({activeClient.companyName})</span>
-              <QuickAddProduct clientId={activeClient.id} onAdd={(prod) => addProduct(activeClient.id, prod)} />
+              <span>Catalog & Inventory Setup ({activeClient?.companyName || 'Store'})</span>
+              <QuickAddProduct clientId={activeClient?.id || ''} onAdd={(prod) => addProduct(activeClient?.id || '', prod)} />
             </div>
 
             <div className="table-container">
@@ -1115,7 +1198,7 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
                   </tr>
                 </thead>
                 <tbody>
-                  {(products[activeClient.id] || []).map(p => (
+                  {(products[activeClient?.id || ''] || []).map(p => (
                     <tr key={p.id}>
                       <td><strong>{p.name}</strong></td>
                       <td><code>{p.hsCode || 'N/A'}</code></td>
@@ -1139,7 +1222,7 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
           <div className="card">
             <div className="card-title">
               <span>Merchant Customer Loyalty Directory</span>
-              <QuickAddCustomer clientId={activeClient.id} onAdd={cust => addCustomer(activeClient.id, cust)} />
+              <QuickAddCustomer clientId={activeClient?.id || ''} onAdd={cust => addCustomer(activeClient?.id || '', cust)} />
             </div>
 
             <div className="table-container">
@@ -1152,7 +1235,7 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
                   </tr>
                 </thead>
                 <tbody>
-                  {(customers[activeClient.id] || []).map(c => (
+                  {(customers[activeClient?.id || ''] || []).map(c => (
                     <tr key={c.id}>
                       <td><strong>{c.name}</strong></td>
                       <td>{c.phone || 'N/A'}</td>
@@ -1182,7 +1265,7 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
                   <div style={{ padding: '16px', background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.2)', borderRadius: '8px' }}>
                     <h4 style={{ color: 'var(--warning)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span>⚠️ Offline Queue pending: {offlineQueueCount} invoices</span>
-                      <button className="btn btn-primary btn-sm" onClick={handleBulkSyncOfflineQueue}>
+                      <button className="btn btn-primary btn-sm" type="button" onClick={handleBulkSyncOfflineQueue}>
                         Sync Now
                       </button>
                     </h4>
@@ -1198,7 +1281,7 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
                 </div>
                 <div className="form-group">
                   <label>Active License Auth Key</label>
-                  <input type="text" className="form-control" readOnly value={activeClient.authKey} />
+                  <input type="text" className="form-control" readOnly value={activeClient?.authKey || ''} />
                 </div>
               </div>
             </div>
@@ -1206,7 +1289,7 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
             <div className="card">
               <div className="card-title">FBR Live API Log Console</div>
               <div className="logs-console">
-                {fbrLogs.filter(log => log.payload.POSID === activeClient.posId).map((log, idx) => (
+                {fbrLogs.filter(log => log.payload?.POSID === activeClient?.posId).map((log, idx) => (
                   <div key={idx} className={`log-entry ${log.type === 'SUCCESS' ? 'success' : 'error'}`}>
                     <span className="log-time">[{log.time}]</span>
                     <strong>{log.method} {log.type}</strong>
@@ -1228,16 +1311,16 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
             <div className="form-row">
               <div className="form-group">
                 <label>Company Display Name</label>
-                <input type="text" className="form-control" defaultValue={activeClient.companyName} />
+                <input type="text" className="form-control" defaultValue={activeClient?.companyName || ''} />
               </div>
               <div className="form-group">
                 <label>Integrated POS ID</label>
-                <input type="text" className="form-control" readOnly defaultValue={activeClient.posId} />
+                <input type="text" className="form-control" readOnly defaultValue={activeClient?.posId || ''} />
               </div>
             </div>
             <div className="form-group">
               <label>Outlet Physical Address</label>
-              <input type="text" className="form-control" defaultValue={activeClient.address} />
+              <input type="text" className="form-control" defaultValue={activeClient?.address || ''} />
             </div>
             <div className="form-row">
               <div className="form-group">
@@ -1266,7 +1349,7 @@ Verification URL: https://fbr.gov.pk/verify?fbrno=${invoice.fbrFiscalNumber || '
               </div>
               <div className="metric-card">
                 <div className="metric-label">Collective Sales Tax</div>
-                <div className="metric-value">Rs. {invoices.filter(i => i.fbrStatus === 'SUCCESS').reduce((s, i) => s + i.salesTax, 0).toLocaleString()}</div>
+                <div className="metric-value">Rs. {invoices.filter(i => i.fbrStatus === 'SUCCESS').reduce((s, i) => s + (i.salesTax || 0), 0).toLocaleString()}</div>
               </div>
             </div>
 
